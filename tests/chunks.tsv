@@ -1,0 +1,12 @@
+name	check	at	chunk_starts	texts	expected
+one chunk: from the start	runstart	160000	0		0
+open chunk of exactly the minimum: from it	runstart	352000	0,320000		320000
+open chunk a frame short: with the one before	runstart	351999	0,320000		0
+third chunk too short: from the second	runstart	660000	0,320000,640000		320000
+every closed chunk before the run	endchunks	640000	0,320000,640000	a,b	640000|a,b
+run a chunk back: its own text unused	endchunks	320000	0,320000,640000	a,b	320000|a
+first chunk failed: all decoded again	endchunks	640000	0,320000,640000	-,b	0|
+second chunk failed: from it	endchunks	640000	0,320000,640000	a,-	320000|a
+failed chunk after the run start: unused	endchunks	320000	0,320000,640000	a,-	320000|a
+a chunk that heard nothing is kept	endchunks	640000	0,320000,640000	,b	640000|,b
+no closed chunk	endchunks	0	0		0|

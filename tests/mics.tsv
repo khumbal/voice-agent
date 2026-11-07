@@ -1,0 +1,20 @@
+name	devices	preferred	expected
+usb headset plugged, built-in still default (2026-10-28)	USBC Headset/usb;MacBook Pro Microphone/bltn/default;Microsoft Teams Audio/virt		USBC Headset
+airpods took the default: built-in	MacBook Pro Microphone/bltn;AirPods Pro/blue/default		MacBook Pro Microphone
+airpods and desk mic: desk mic	AirPods Pro/blue/default;PD200X Podcast Microphone/usb;MacBook Pro Microphone/bltn		PD200X Podcast Microphone
+two wired: the default one	PD200X Podcast Microphone/usb;USBC Headset/usb/default		USBC Headset
+two wired, default built-in: the first listed	PD200X Podcast Microphone/usb;USBC Headset/usb;MacBook Pro Microphone/bltn/default		PD200X Podcast Microphone
+teams is the default: built-in	Microsoft Teams Audio/virt/default;MacBook Pro Microphone/bltn		MacBook Pro Microphone
+aggregate is the default: built-in	CADefaultDeviceAggregate-1-1/grup/default;MacBook Pro Microphone/bltn		MacBook Pro Microphone
+iphone joined by continuity: built-in	iPhone Microphone/ccwl/default;MacBook Pro Microphone/bltn		MacBook Pro Microphone
+ble headset only: it	Galaxy Buds/blea/default		Galaxy Buds
+a transport not listed counts as wired	Odd Interface/????;MacBook Pro Microphone/bltn/default		Odd Interface
+only virtual: none	Microsoft Teams Audio/virt/default		none
+no devices: none			none
+named one wins over wired	USBC Headset/usb/default;MacBook Pro Microphone/bltn	macbook	MacBook Pro Microphone
+named in any case and part	MacBook Pro Microphone/bltn;AirPods Pro/blue	airpods	AirPods Pro
+first named absent: the next named	MacBook Pro Microphone/bltn;USBC Headset/usb	PD200X;MacBook	MacBook Pro Microphone
+named absent: the ranking	MacBook Pro Microphone/bltn/default;USBC Headset/usb	PD200X	USBC Headset
+named virtual records	Microsoft Teams Audio/virt;MacBook Pro Microphone/bltn/default	Teams	Microsoft Teams Audio
+transport unreadable (0) counts as wired	Odd Interface/0;MacBook Pro Microphone/bltn/default		Odd Interface
+a name two devices match: the first listed	USB Mic A/usb;USB Mic B/usb/default	usb mic	USB Mic A

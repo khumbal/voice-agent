@@ -1,0 +1,2 @@
+# LF in the working tree whatever core.autocrlf says: bash scripts and the .tsv test tables break on CRLF.
+* text=auto eol=lf

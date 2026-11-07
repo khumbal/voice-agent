@@ -1,0 +1,48 @@
+name	apple	whisper	reference	expected
+E1 english at start	ด็อกเกอร์คอนเทนเนอร์ตัวนี้รีสตาร์ทบ่อยมาก	Docker container ตัวนี้ restart บ่อยมาก	Docker container ตัวนี้ restart บ่อยมาก	Docker container ตัวนี้ restart บ่อยมาก
+E2 english at end	ช่วยเปิดพูลรีเควสต์	ช่วยเปิด pull request		ช่วยเปิด pull request
+E3 case differs	ช่วย Commit ให้หน่อย	ช่วย commit ให้หน่อย		ช่วย Commit ให้หน่อย
+E4 apple right latin, whisper wrong	แล้ว push ขึ้น GitHub	แล้ว push ขึ้น hit up		แล้ว push ขึ้น hit up
+E5 whisper outro hallucination	ช่วยแก้บั๊กหน่อย	ช่วยแก้ bug หน่อย Thank you for watching		ช่วยแก้ bug หน่อย
+E5b outro short apple	โอเค	โอเค Thanks for watching!		โอเค
+E6 numbers	รอสักสองวินาที	รอสัก 2 วินาที		รอสักสองวินาที
+E6b port	เปิดพอร์ต 8080	เปิด port 8080		เปิด port 8080
+E6c digits vs thai	เปลี่ยนเป็นเวอร์ชันสามจุดสอง	เปลี่ยนเป็น version 3.2		เปลี่ยนเป็น version 3.2
+E7 punctuation span	เปิดไฟล์ README	เปิดไฟล์ README.md		เปิดไฟล์ README.md
+E8 whisper English for Thai word	ทำให้ระบบเร็วขึ้น	ทำให้ระบบ fast ขึ้น		ทำให้ระบบ fast ขึ้น
+E9 whisper drops thai near english	ช่วยรันเทสต์ทั้งหมดอีกครั้ง	ช่วย run test อีกครั้ง		ช่วย run test อีกครั้ง
+E10 whisper wrong english over apple thai	ช่วยดูล็อกให้หน่อย	ช่วยดู last ให้หน่อย		ช่วยดู last ให้หน่อย
+E11 apple latin, whisper thai translit	ช่วย refactor ให้หน่อย	ช่วยรีแฟคเตอร์ให้หน่อย		ช่วย refactor ให้หน่อย
+E12 interleaved spans	แก้บั๊กในไทป์สคริปต์ที่ฟังก์ชันพาร์สคอนฟิก	แก้ bug ใน TypeScript ที่ function parse config		แก้ bug ใน TypeScript ที่ function parse config
+E13 english loop	รันเทสต์	run test run test run test		run test run test
+E14 apple space mismatch	ช่วย merge branch feature เข้าเมน	ช่วยเมิร์จ branch feature เข้า main		ช่วย merge branch feature เข้า main
+E15 whisper translit + apple latin mixed	ช่วย push ขึ้นบรานช์เมน	ช่วยพุช ขึ้น branch main		ช่วย push ขึ้น branch main
+E16 dangerous: whisper adds	ช่วยลบไฟล์ชั่วคราว	ช่วย rm -rf ไฟล์ชั่วคราว		ช่วย rm -rf ไฟล์ชั่วคราว
+C ha ha ha ha	ha ha ha ha	ha ha ha ha		ha ha ha ha
+C test test test	test test test	test test test		test test test
+C 1000000000000	1000000000000	1000000000000		1000000000000
+C ไปเรื่อยๆ ไปเรื่อยๆ	ไปเรื่อยๆ ไปเรื่อยๆ	ไปเรื่อยๆ ไปเรื่อยๆ		ไปเรื่อยๆ ไปเรื่อยๆ
+C ==========	==========	==========		==========
+C aaaaaaaaaaaa	aaaaaaaaaaaa	aaaaaaaaaaaa		aaaaaa
+C ทีละไฟล์ทีละไฟล์	ทีละไฟล์ทีละไฟล์	ทีละไฟล์ทีละไฟล์		ทีละไฟล์ทีละไฟล์
+C เช็ค log log log	เช็ค log log log	เช็ค log log log		เช็ค log log log
+C ใช้ v1.2.3 v1.2.3	ใช้ v1.2.3 v1.2.3	ใช้ v1.2.3 v1.2.3		ใช้ v1.2.3 v1.2.3
+C abcabcabcabc	abcabcabcabc	abcabcabcabc		abcabc
+C ช่วย run test run test ให้หน่อย	ช่วย run test run test ให้หน่อย	ช่วย run test run test ให้หน่อย		ช่วย run test run test ให้หน่อย
+C go go go go go go	go go go go go go	go go go go go go		go go go go go go
+C เคสที่หนึ่งเคสที่สอง	เคสที่หนึ่งเคสที่สอง	เคสที่หนึ่งเคสที่สอง		เคสที่หนึ่งเคสที่สอง
+C localhost:3000/3000/3000	localhost:3000/3000/3000	localhost:3000/3000/3000		localhost:3000/3000/3000
+R1 whisper outro after english	ช่วยรันเทสต์ แล้ว คอมมิต	ช่วย run test แล้ว commit ขอบคุณที่รับชมครับ		ช่วย run test แล้ว commit
+R2 whisper outro glued to english	ช่วยรันเทสต์แล้วพุชขึ้นบรานช์เมน	ช่วย run test แล้ว push ขึ้น branch main ขอบคุณที่รับชม		ช่วย run test แล้ว push ขึ้น branch main
+R3 thai vowel differs after english	ช่วยดูล็อกตรงนี้	ช่วยดู log ตรงนั้นนะ		ช่วยดู log ตรงนั้นนะ
+boundary อย่าง is not อย่า	แก้ให้ถูกต้องแล้ว	แก้อย่างถูกต้องแล้ว		แก้ให้ถูกต้องแล้ว
+boundary not repeated	ฉันไม่ไปหรอก	ฉันไม่ไป ไม่ไปหรอก		ฉันไม่ไปหรอก
+boundary ใหม่ heard as ไม่	ลองเริ่มใหม่อีกครั้งนะ	ลองเริ่มไม่อีกครั้งนะ		ลองเริ่มใหม่อีกครั้งนะ
+boundary ไม่ว่าง is one	ตอนนี้ว่างครับ	ตอนนี้ไม่ว่างครับ		ตอนนี้ไม่ว่างครับ
+boundary ไม่ Apple dropped	อันนี้ต้องแก้	อันนี้ไม่ต้องแก้		อันนี้ไม่ต้องแก้
+boundary ไม่ Apple dropped alone	วันนี้ฉันไปทำงาน	วันนี้ฉันไม่ไปทำงาน		วันนี้ฉันไม่ไปทำงาน
+boundary ไม่ repeated	ฉันไม่ไปแล้วนะ	ฉันไม่ ไม่ไปแล้วนะ		ฉันไม่ไปแล้วนะ
+boundary ไม่ได้ Apple dropped	ฉันทำงานนี้	ฉันไม่ได้ทำงานนี้		ฉันไม่ได้ทำงานนี้
+boundary ไม่ for a comma	อันนี้,ต้องแก้	อันนี้ ไม่ ต้องแก้		อันนี้ ไม่ ต้องแก้
+boundary ไม่ phrase added at the end	งานนี้เสร็จแล้ว	งานนี้เสร็จแล้วนะ ไม่ต้องห่วง		งานนี้เสร็จแล้ว
+boundary ไม่ at the end	ทำได้หรือ	ทำได้หรือไม่		ทำได้หรือไม่

@@ -1,0 +1,35 @@
+# คลังคำศัพท์ของ voice-agent: เขียนเป็นประโยคตัวอย่างแบบที่พูดจริง บรรทัดละประโยค
+# คำอังกฤษให้สะกดเป็นภาษาอังกฤษ (เช่น "ช่วยตรวจสอบ defect ใน web app") — Whisper จะสะกดตาม
+# ใส่เป็นรายการคำเฉยๆ ไม่ได้ผล ต้องอยู่ในประโยค และควรสั้น: Whisper อ่านประโยครวมกันได้แค่ 224 token
+# (ไทยราว 1 token ต่อตัวอักษร อังกฤษราว 1 token ต่อคำ) ส่วนที่เกินจะถูกตัดทิ้งจากประโยคแรกๆ เงียบๆ
+# แก้แล้วมีผลกับการพูดครั้งถัดไปทันที ไม่ต้อง build ใหม่
+# คำชุดนี้มาจากคำที่ใช้บ่อยในข้อความที่พิมพ์ใน Claude Code
+# บรรทัดที่มี " = " คือคำที่ถอดผิดซ้ำๆ: คำที่ถูก = คำผิดที่เคยออกมา คั่นด้วย "," (แก้ในข้อความสุดท้าย ไม่เข้า prompt)
+# คำอังกฤษเทียบทั้งคำ ไม่สนตัวพิมพ์เล็กใหญ่ ดูคำผิดที่ออกมาจริงได้ใน ~/Library/Logs/voice-agent.log
+keyword = คีย์ Word ร์, คีย์ Word, คีย์เวิร์ด
+tablet = แท็บเล็ต, แท็บเลต
+Claude Agent = ClaudEgent, Cloud Agent, คอร์สเอเจนต์, คล็อดเอเจนต์
+null = เนาว์, เนาว, เนา, นัลล์
+gap = Grab, Gab, แก๊ป, แก๊บ, แกป
+agent bridge = agent bit, agent bid, เอเจนต์บิด, เอเจนต์บริดจ์, เอเจนต์บริด
+ช่องโหว่ = ช่อง VOO, ช่อง work
+สอดคล้อง = sort ของ
+เลือก (ก) = เลือกกอ, เลือก Core
+เลือก (ข) = เลือกขอ
+เลือก (ค) = เลือกคอ
+expert agent = เอกเปิดเอเจนต์, เอ็กซ์เปิดเอเจนต์
+process = โปรเซส, โพรเซส
+socket = ซอกเก็ต, Cock
+production ready = production lady, โปรดักชั่นเลดี้, โปรดักชันเลดี้
+เปิด MR ให้ Tech Lead
+แก้ defect หน้า screen บน tablet
+ส่ง null
+ใช้ agent bridge ถาม Copilot
+สร้าง worktree ทำ mapping ไป adapter
+อย่า over-engineer
+ช่วย run test แล้ว commit แล้ว push ขึ้น branch main
+defect ใน web app
+deploy ขึ้น server
+ดู log ของ API endpoint
+refactor service
+Claude Code

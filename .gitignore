@@ -1,0 +1,6 @@
+# Rebuilt by install.sh / npm
+vscode-extension/node_modules/
+vscode-extension/out/
+*.vsix
+__pycache__/
+*.pyc

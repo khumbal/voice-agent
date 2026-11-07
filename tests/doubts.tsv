@@ -1,0 +1,7 @@
+name	apple	whisper	expected
+Whisper heard nothing	ทำต่อเลยนะครับ		Whisper ไม่ได้ยินอะไร
+Apple's 'not' lost under Whisper's English span	บิวด์ไม่ได้นะครับ	Build ได้นะครับ	คำว่า "ไม่" หายไป
+the 'not' only Whisper heard is kept: sent	อยากแก้ไฟล์นี้นะครับ	อย่าแก้ไฟล์นี้นะครับ	send
+the merge dropping Whisper's added ending is not a doubt	ช่วยรันเทสต์ให้หน่อย	ช่วย run test ให้หน่อย Thank you.	send
+a full stop after Whisper's text is not a doubt	เปิดวีเอสโค้ดให้หน่อย	เปิด VS Code ให้หน่อย.	send
+Apple's transliterated English: the merge trusts Whisper	เปิดเทอร์มินอลวีเอสโค้ดแล้วรันบันสตาร์ท	เปิด terminal VS Code แล้ว run bun start	send

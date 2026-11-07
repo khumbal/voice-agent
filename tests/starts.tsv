@@ -1,0 +1,6 @@
+name	current	segment	expected
+comment restart	สามารถจัดการ	ออกแบบ	restart
+comment revise	พิจารณาเรื่อง	เรื่องของ	revise
+same start	ช่วยตรวจสอบ	ช่วยตรวจสอบให้หน่อย	none
+boundary half: revise	กขคงจฉชซ	คงจฉ	revise
+boundary under half: restart	กขคงจฉชซฌ	คงจฉ	restart

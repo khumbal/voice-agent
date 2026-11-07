@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>voice-agent</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.local.voiceagent.cli</string>
+	<key>CFBundleName</key>
+	<string>voice-agent</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>รับคำสั่งเสียงเพื่อควบคุม VS Code</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>แปลงเสียงเป็นข้อความด้วย Apple Neural Engine</string>
+</dict>
+</plist>

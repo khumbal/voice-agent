@@ -1,0 +1,7 @@
+# Microphones to record with, best first, one per line: any part of the device's name, any case.
+# The first one plugged in records. With none of them plugged in (or no lines here) the recorder picks:
+# a wired microphone, then the built-in, then a wireless one (AirPods, iPhone), never a virtual one (Teams).
+# `~/Applications/VoiceAgent.app/Contents/MacOS/voice-agent microphones` lists the names and marks the pick (*).
+#
+# PD200X
+# USBC Headset

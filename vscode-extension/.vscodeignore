@@ -1,0 +1,7 @@
+.vscode/**
+.ruff_cache/**
+src/**
+tsconfig.json
+*.code-workspace
+**/*.map
+*.vsix
