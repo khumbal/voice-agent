@@ -485,10 +485,7 @@ class HUDWindow: NSPanel {
     init() {
         let width: CGFloat = 560
         let height = Self.minTextHeight + Self.chromeHeight
-        let screenRect = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let x = screenRect.origin.x + (screenRect.width - width) / 2
-        let y = screenRect.origin.y + 90
-        let contentRect = NSRect(x: x, y: y, width: width, height: height)
+        let contentRect = NSRect(x: 0, y: 0, width: width, height: height) // present() places it
 
         super.init(
             contentRect: contentRect,
@@ -546,7 +543,11 @@ class HUDWindow: NSPanel {
     }
 
     // Fades in rather than popping up over what the user is looking at.
+    // Placed on the screen that is main now: a standby's HUD was built before the press, maybe on another screen.
     func present() {
+        let screenRect = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        setFrameOrigin(NSPoint(x: screenRect.origin.x + (screenRect.width - frame.width) / 2,
+                               y: screenRect.origin.y + 90))
         alphaValue = 0
         orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
@@ -623,8 +624,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                                     AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
                                                     AVLinearPCMIsFloatKey: false]
     private var whisperConverter: AVAudioConverter?
-    private let whisperURL = Config.recordingsDir
-        .appendingPathComponent("\(Int(Date().timeIntervalSince1970)).wav")
+    private var whisperURL = AppDelegate.newRecordingURL() // named again when a standby starts recording
+    private static func newRecordingURL() -> URL {
+        Config.recordingsDir.appendingPathComponent("\(Int(Date().timeIntervalSince1970)).wav")
+    }
     // The run started at a pause (see Config.pauseSeconds). Under tapLock: the 16 kHz audio so far, the quiet since
     // the last loud buffer, and whether there was speech after the last pause's snapshot.
     private var heard16k: [Float] = []
@@ -653,7 +656,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let targetMode: TargetMode
     // Where the text goes in vscode mode: the app that had focus when the hotkey was pressed (this recorder opens
     // without taking it). VS Code gets it in its terminal through the extension; any other app at its cursor.
-    private let targetApp = NSWorkspace.shared.frontmostApplication
+    private var targetApp = NSWorkspace.shared.frontmostApplication // a standby's is read again at the press
     // In VS Code, the window and the place in it (terminal tab, editor cursor) that had the keyboard then, as that
     // window's extension remembered it: set before vscodeSnapshotDone is left, nil when no window took the snapshot.
     private var vscodeSnapshot: (window: String, id: String)?
@@ -663,6 +666,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let tapLock = NSLock() // the audio tap thread reads recognitionRequest/whisperFile; main replaces them
     private var peakLevel: Float = 0 // loudest sample so far, under tapLock
     private var micLive = false // the input has delivered sound: main thread
+    // Logged once the mic is live: ms to each step from this process's exec (a standby's: from its wake-up), where
+    // the wait for the beep goes.
+    private var startSteps: [String] = []
+    private var firstBufferAt: Date? // under tapLock
+    private var stepsFrom: Date = {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return Date() }
+        let start = info.kp_proc.p_un.__p_starttime
+        return Date(timeIntervalSince1970: Double(start.tv_sec) + Double(start.tv_usec) / 1_000_000)
+    }()
+    private func step(_ name: String, at date: Date = Date()) {
+        startSteps.append("\(name)=\(Int(date.timeIntervalSince(stepsFrom) * 1000))")
+    }
     private var recordingStarted = Date()
     private var recordedSeconds: TimeInterval = 0 // set when listening stops
     private var whisperStop: (() -> Void)? // under processLock: stops the run under way (a pause's, or for Esc)
@@ -677,9 +695,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var sigintSource: DispatchSourceSignal?
     private var sigtermSource: DispatchSourceSignal?
     private var sigusr1Source: DispatchSourceSignal?
+    private var sigusr2Source: DispatchSourceSignal?
 
-    init(mode: TargetMode) {
+    // A standby is launched ahead of the press by the hotkey listener (its pid), so the press skips the app's launch:
+    // it waits, off the microphone and off screen, for SIGUSR2 and only then starts like a fresh recorder.
+    private let standbyFor: pid_t?
+    private var isStandby: Bool
+    private var listenerExit: DispatchSourceProcess?
+    private var standbyActivity: NSObjectProtocol?
+    private var didFinishLaunching = false
+    private var tink: NSSound? // loaded ahead: afplay took up to 0.4 s to start, after the mic was already live
+
+    init(mode: TargetMode, standbyFor listener: pid_t? = nil) {
         self.targetMode = mode
+        self.standbyFor = listener
+        self.isStandby = listener != nil
         self.speechRecognizer = SFSpeechRecognizer(locale: Config.locale)
         super.init()
     }
@@ -695,21 +725,80 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        log("start pid=\(getpid())") // a start with no hotkey "launched" line came from the toggle script or Shortcuts
-        requestVSCodeSnapshot()
-        setupMenuBar()
-        setupFloatingHUD()
-        setupCancelKey()
-
-        SFSpeechRecognizer.requestAuthorization { authStatus in
-            DispatchQueue.main.async {
-                if authStatus == .authorized {
-                    self.startRecording()
-                } else {
-                    self.abort("ไม่ได้รับสิทธิ์ Speech Recognition")
-                }
-            }
+        didFinishLaunching = true
+        // Not a standby, or one woken before it finished launching (its signal handlers were already up).
+        guard let listener = standbyFor, isStandby else {
+            begin()
+            return loadTink()
         }
+        loadTink()
+        // The listener gone (install.sh restarts it for a new build), this standby would record with the old code.
+        listenerExit = DispatchSource.makeProcessSource(identifier: listener, eventMask: .exit, queue: .main)
+        listenerExit?.setEventHandler { NSApp.terminate(nil) }
+        listenerExit?.resume()
+        guard kill(listener, 0) == 0 else { return NSApp.terminate(nil) } // gone before the source was armed
+        // Hidden and idle, it is an App Nap candidate: napping would delay its wake-up at the press.
+        standbyActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical], reason: "Waits for the hotkey")
+        hudWindow = HUDWindow() // built ahead, shown at the press
+        _ = audioEngine.inputNode // made ahead too (no audio flows until the press starts the engine)
+        SFSpeechRecognizer.requestAuthorization { _ in } // a first-time prompt comes now, not at the press
+    }
+
+    private func loadTink() {
+        tink = NSSound(contentsOfFile: "/System/Library/Sounds/Tink.aiff", byReference: false)
+        tink?.volume = 0.7
+    }
+
+    // SIGUSR2: the hotkey was pressed for this standby. What a fresh recorder reads at launch is read now.
+    private func wake() {
+        guard isStandby else { return }
+        isStandby = false
+        listenerExit?.cancel()
+        stepsFrom = Date()
+        targetApp = Self.focusedApp()
+        whisperURL = Self.newRecordingURL()
+        if didFinishLaunching { begin() } // else applicationDidFinishLaunching begins
+    }
+
+    // A long-running process's frontmostApplication follows activation notifications it has not handled yet when the
+    // user switches apps and presses at once. Accessibility names the app with keyboard focus now, taken only when it
+    // is a regular app: Spotlight or a menu bar extra has focus while the app in front stays the one to type into.
+    // A hung focused app costs the press at most 0.25 s (not the default 6 s), then frontmostApplication is used.
+    private static func focusedApp() -> NSRunningApplication? {
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.25)
+        var focused: CFTypeRef?
+        var pid: pid_t = 0
+        guard AXIsProcessTrusted(),
+              AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute as CFString, &focused) == .success,
+              let element = focused, CFGetTypeID(element) == AXUIElementGetTypeID(),
+              AXUIElementGetPid(element as! AXUIElement, &pid) == .success,
+              let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular
+        else { return NSWorkspace.shared.frontmostApplication }
+        return app
+    }
+
+    // The microphone starts before the menu bar item and Esc, which nothing needs until it listens.
+    private func begin() {
+        // A start after a hotkey "wake" line was a standby's; with neither "wake" nor "launched", a direct
+        // `open --args vscode|tmux` or Shortcuts.
+        log("start pid=\(getpid())")
+        step("launched") // a standby: from its wake-up, so about 0
+        requestVSCodeSnapshot()
+        setupFloatingHUD()
+        step("hud")
+        let start = { (status: SFSpeechRecognizerAuthorizationStatus) in
+            self.step("auth")
+            status == .authorized ? self.startRecording() : self.abort("ไม่ได้รับสิทธิ์ Speech Recognition")
+        }
+        if SFSpeechRecognizer.authorizationStatus() == .authorized {
+            start(.authorized)
+        } else {
+            SFSpeechRecognizer.requestAuthorization { status in DispatchQueue.main.async { start(status) } }
+        }
+        setupMenuBar()
+        setupCancelKey()
     }
 
     private func setupMenuBar() {
@@ -723,7 +812,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupFloatingHUD() {
-        hudWindow = HUDWindow()
+        if hudWindow == nil { hudWindow = HUDWindow() }
         hudWindow?.present()
     }
 
@@ -736,19 +825,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         signal(SIGINT, SIG_IGN)
         signal(SIGTERM, SIG_IGN)
         signal(SIGUSR1, SIG_IGN)
+        signal(SIGUSR2, SIG_IGN)
 
         sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-        sigintSource?.setEventHandler { [weak self] in self?.finishAndDispatch() }
+        sigintSource?.setEventHandler { [weak self] in self?.finish() }
         sigintSource?.resume()
 
         sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        sigtermSource?.setEventHandler { [weak self] in self?.finishAndDispatch() }
+        sigtermSource?.setEventHandler { [weak self] in self?.finish() }
         sigtermSource?.resume()
 
         // SIGUSR1 = the push-to-talk key was released: finish and press Enter. Every other ending only types the text.
         sigusr1Source = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
-        sigusr1Source?.setEventHandler { [weak self] in self?.finishAndDispatch(send: true) }
+        sigusr1Source?.setEventHandler { [weak self] in self?.finish(send: true) }
         sigusr1Source?.resume()
+
+        sigusr2Source = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: .main)
+        sigusr2Source?.setEventHandler { [weak self] in self?.wake() }
+        sigusr2Source?.resume()
+    }
+
+    // A standby has nothing to finish: told to stop, it just goes.
+    private func finish(send: Bool = false) {
+        isStandby ? NSApp.terminate(nil) : finishAndDispatch(send: send)
     }
 
     // Esc cancels without sending. It is registered only while this recording instance runs, so other apps get Esc
@@ -876,6 +975,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                           &id, UInt32(MemoryLayout<AudioDeviceID>.size)) == noErr
         }
         microphone = pinned ? chosen : microphones.first(where: \.isDefault)
+        step("mic")
         // The device's own format: the output side keeps the default's rate after pinning (a 44.1 kHz headset with
         // the built-in at 48 kHz: a 48 kHz tap that never gets a buffer).
         let recordingFormat = inputNode.inputFormat(forBus: 0)
@@ -903,6 +1003,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
             let peak = Self.peak(of: buffer)
             self.tapLock.lock()
+            if self.firstBufferAt == nil { self.firstBufferAt = Date() }
             if self.peakLevel < Config.silentInputPeak, peak >= Config.silentInputPeak {
                 DispatchQueue.main.async { self.micBecameLive() }
             }
@@ -931,6 +1032,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try audioEngine.start()
             recordingStarted = Date()
+            step("engine", at: recordingStarted)
             hudWindow?.showStatus("รอไมค์พร้อม… (เริ่มพูดเมื่อได้ยินเสียงติ๊ง)", state: .waiting)
             DispatchQueue.main.asyncAfter(deadline: .now() + Config.micWakeTimeout) { [weak self] in
                 guard let self, !self.micLive, !self.isFinishing else { return }
@@ -1029,7 +1131,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func micBecameLive() {
         guard !micLive, !isFinishing else { return }
         micLive = true
-        playSound("Tink")
+        if let tink { tink.play() } else { playSound("Tink") }
+        tapLock.lock()
+        if let first = firstBufferAt { step("buffer", at: first) }
+        tapLock.unlock()
+        step("live")
+        let from = ISO8601DateFormatter.string(from: stepsFrom, timeZone: .gmt,
+                                               formatOptions: [.withInternetDateTime, .withFractionalSeconds])
+        log("live pid=\(getpid()) standby=\(standbyFor != nil) from=\(from) ms: \(startSteps.joined(separator: " "))")
         hudWindow?.showStatus("กำลังฟัง · \(inputDeviceName)", state: .listening)
         resetSilenceTimer() // a tap with no speech ends too, even if the recognizer never reports
     }
@@ -2075,8 +2184,21 @@ enum ToggleHotkey {
     private static var launching = false
     private static var pendingSignal: Int32?
     private static var signalled = Set<pid_t>() // recorders told to finish: transcribing, no longer listening
+    // A recorder launched ahead and waiting off the microphone (see AppDelegate.wake): a press wakes it instead of
+    // launching one, which took ~0.5 s. Never a recorder to signal: while one launches, nothing launched since counts.
+    private static var standby: NSRunningApplication?
+    private static var standbyLaunchedAt: Date?
+    private static var launched: pid_t? // the last recorder launched on a press
+    private static var toggleSource: DispatchSourceSignal?
 
     static func register() -> Bool {
+        // SIGUSR2 from toggle-voice.sh: a tap of the hotkey. First, so only a toggle before this line (early in a
+        // restart) still kills the listener; launchd starts it again.
+        signal(SIGUSR2, SIG_IGN)
+        toggleSource = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: .main)
+        toggleSource?.setEventHandler { pressed(); released() }
+        toggleSource?.resume()
+
         var events = [
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
@@ -2107,7 +2229,29 @@ enum ToggleHotkey {
         let id = EventHotKeyID(signature: OSType(0x56414754), id: 1) // 'VAGT'
         let status = RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | optionKey), id,
                                          GetApplicationEventTarget(), 0, &hotKeyRef)
+        if status == noErr { launchStandby() }
         return status == noErr
+    }
+
+    private static func launchStandby() {
+        guard standby == nil, standbyLaunchedAt == nil else { return }
+        standbyLaunchedAt = Date()
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        config.activates = false
+        config.arguments = ["standby", String(getpid())]
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { app, error in
+            DispatchQueue.main.async {
+                trace("standby pid=\(app?.processIdentifier ?? 0) error=\(error?.localizedDescription ?? "none")")
+                standbyLaunchedAt = nil
+                standby = app
+            }
+        }
+    }
+
+    // The next standby is launched once this press's recorder has had its start to itself.
+    private static func replaceStandby() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { launchStandby() }
     }
 
     private static func pressed() {
@@ -2124,15 +2268,26 @@ enum ToggleHotkey {
             return
         }
         startedOnPress = true
-        launching = true
         pendingSignal = nil
+        defer { replaceStandby() }
+        if let ready = standby, !ready.isTerminated, ready.isFinishedLaunching { // its signal handlers are up
+            standby = nil
+            trace("wake pid=\(ready.processIdentifier)")
+            kill(ready.processIdentifier, SIGUSR2)
+            return
+        }
+        if standby?.isTerminated == true { standby = nil }
+        launching = true
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
         config.activates = false
         config.arguments = [TargetMode.vscode.rawValue]
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { app, error in
             trace("launched pid=\(app?.processIdentifier ?? 0) error=\(error?.localizedDescription ?? "none")")
-            DispatchQueue.main.async { awaitLaunch(app, until: Date().addingTimeInterval(5)) }
+            DispatchQueue.main.async {
+                launched = app?.processIdentifier
+                awaitLaunch(app, until: Date().addingTimeInterval(5))
+            }
         }
     }
 
@@ -2170,20 +2325,33 @@ enum ToggleHotkey {
     }
 
     private static func runningRecorderPIDs() -> [pid_t] {
-        NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
-            .map(\.processIdentifier).filter { $0 != getpid() }
+        recorders().map(\.processIdentifier)
+    }
+
+    // Every instance of this bundle but this listener and the standby, the one launching included (a recorder this
+    // listener launched meanwhile still counts; one started otherwise in that ~0.5 s, by `open` or Shortcuts, does
+    // not, so a press then wakes the standby instead of stopping it).
+    private static func recorders() -> [NSRunningApplication] {
+        NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "").filter {
+            app in
+            guard app.processIdentifier != getpid(), app.processIdentifier != standby?.processIdentifier else {
+                return false
+            }
+            guard let since = standbyLaunchedAt, app.processIdentifier != launched else { return true }
+            return (app.launchDate ?? .distantPast) < since
+        }
     }
 
     // stderr is the LaunchAgent's ~/Library/Logs/voice-agent-hotkey.log.
     private static func trace(_ message: String) {
-        fputs("\(ISO8601DateFormatter().string(from: Date())) \(message)\n", stderr)
+        let now = ISO8601DateFormatter.string(from: Date(), timeZone: .gmt,
+                                              formatOptions: [.withInternetDateTime, .withFractionalSeconds])
+        fputs("\(now) \(message)\n", stderr) // ms: matched against a recorder's "live" steps
     }
 
     // A recorder already told to finish is skipped, so a press during its transcription starts a new recording.
     private static func runningRecorder() -> NSRunningApplication? {
-        let bundleID = Bundle.main.bundleIdentifier ?? ""
-        let recorders = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-            .filter { $0.processIdentifier != getpid() }
+        let recorders = recorders()
         signalled.formIntersection(recorders.map(\.processIdentifier))
         return recorders.first { !signalled.contains($0.processIdentifier) }
     }
@@ -2213,7 +2381,9 @@ if modeArg == "hotkey" {
     }
     app.run()
 } else {
-    let delegate = AppDelegate(mode: TargetMode(rawValue: modeArg) ?? .vscode)
+    // "standby <listener pid>": launched by the hotkey listener ahead of the next press (see ToggleHotkey).
+    let standbyFor = modeArg == "standby" ? args.dropFirst(2).first.flatMap { pid_t($0) } : nil
+    let delegate = AppDelegate(mode: TargetMode(rawValue: modeArg) ?? .vscode, standbyFor: standbyFor)
     // Before app.run, so the hotkey listener can signal as soon as the app reports it finished launching.
     delegate.setupSignalHandlers()
     app.delegate = delegate

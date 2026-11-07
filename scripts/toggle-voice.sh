@@ -1,7 +1,13 @@
 #!/bin/zsh
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
-# Match only the recording instance; the hotkey listener runs the same binary as "voice-agent hotkey".
+# The hotkey listener takes SIGUSR2 as a tap of the hotkey: it stops the recording that is listening, or wakes its
+# standby recorder (no launch to wait for), and keeps track of both as it does for the hotkey.
+if pkill -USR2 -f 'VoiceAgent.app/Contents/MacOS/voice-agent hotkey'; then
+    exit 0
+fi
+
+# No listener: match only the recording instance.
 RECORDER='VoiceAgent.app/Contents/MacOS/voice-agent (vscode|tmux)'
 
 if pgrep -f "$RECORDER" > /dev/null; then
@@ -9,5 +15,4 @@ if pgrep -f "$RECORDER" > /dev/null; then
     exit 0
 fi
 
-# -n: the hotkey listener is already a running instance of this bundle
 open -n -g "$HOME/Applications/VoiceAgent.app" --args vscode
