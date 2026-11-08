@@ -1616,8 +1616,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         let thaiCount = { (text: String) in text.filter(Config.isThai).count }
-        // Apple's "ใหม่" where Whisper has "ไม่" is a tone either of them may have misheard, not a dropped "not".
-        let soundsLikeNot = ["ใหม่", "ไหม", "มั้ย", "มั๊ย", "ไม้", "ไหม้"]
+        // Apple's "ใหม่" where Whisper has "ไม่" is a tone either of them may have misheard, not a dropped "not". So
+        // are "หมาย" and "มี": "หน่วงหมายถึง" came out "นวงไม่ถึง", "ยังมีหน่วง" came out "ยังไม่นวง" (lag reported
+        // as none). Not when Whisper's span holds the word too: "ไม่มีปัญหา" for Apple's "มีปัญหา" is a real "not".
+        // Matched inside words ("เป้าหมาย"). A "ไม่" Apple heard as "มี" ("มีต้องแก้") keeps Apple's: replayed on 888
+        // logged dictations, this changed 3, each a "not" Whisper made up ("และมีประสิทธิภาพ").
+        let soundsLikeNot = ["ใหม่", "ไหม", "มั้ย", "มั๊ย", "ไม้", "ไหม้", "หมาย", "มี"]
         var merged = "", appleSpan = "", whisperSpan = "", lastWord = "", addedAtEnd = ""
         func flush(atEnd: Bool = false, next: String = "") {
             let appleWord = appleSpan.trimmingCharacters(in: .whitespaces)
@@ -1637,7 +1641,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // Words Apple dropped ("พิจารณา" before "เรื่องของ…"), but not at the end, where Whisper tends to add
                 // a phrase nobody said.
                 merged += whisperSpan
-            } else if negations(whisperSpan) > negations(appleSpan), !soundsLikeNot.contains(where: appleSpan.contains),
+            } else if negations(whisperSpan) > negations(appleSpan),
+                      !soundsLikeNot.contains(where: { appleSpan.contains($0) && !whisperSpan.contains($0) }),
                       !appleWord.contains(where: \.isLetter)
                         ? thaiCount(whisperSpan) < 5 && !repeatsNeighbour(mergeUnits(whisperWord))
                         : whisperSpan.count <= appleSpan.count * 2 {
