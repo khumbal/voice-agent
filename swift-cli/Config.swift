@@ -210,11 +210,19 @@ struct Config {
     static let speakerQuietDB: Float = -50
     static let speakerVoicedSeconds = 0.5
 
-    // Where a run of `count` samples is scored: a window every speakerHop, the last ending at the run's end.
-    static func speakerWindows(count: Int) -> [Int] {
+    // Where a run of `count` samples starting at frame `offset` of the recording is scored, from the run's start: a
+    // window every speakerHop of the recording (so each is scored once, while it is heard, whichever runs hold it),
+    // the last ending at the run's end.
+    static func speakerWindows(count: Int, offset: Int = 0) -> [Int] {
         guard count >= speakerWindow else { return [] }
-        let starts = Array(stride(from: 0, through: count - speakerWindow, by: speakerHop))
+        let first = firstOnGrid(offset)
+        let starts = Array(stride(from: first, through: count - speakerWindow, by: speakerHop))
         return starts.last == count - speakerWindow ? starts : starts + [count - speakerWindow]
+    }
+
+    // From a run's start at frame `offset` of the recording: its first frame on the recording's speakerHop grid.
+    static func firstOnGrid(_ offset: Int) -> Int {
+        (offset + speakerHop - 1) / speakerHop * speakerHop - offset
     }
 
     // Whether a window holds speakerVoicedSeconds of 100 ms frames louder than speakerQuietDB (see speakerDir).
@@ -237,17 +245,23 @@ struct Config {
     // and words Whisper then misses stay in the text from Apple's (finalText keeps what only Apple heard, but for a
     // one-word stammer). Apple's text is not gated: a bystander Apple also heard is kept the same way, so a dictation
     // held to send is then typed without Return (see doubt).
-    static func silencedRanges(count: Int, starts: [Int], scores: [Float?]) -> [Range<Int>] {
-        let blocks = Array(stride(from: 0, to: count, by: speakerHop))
-        let others = blocks.map { block -> Bool in
-            let end = min(block + speakerHop, count)
+    // Blocks lie on the recording's speakerHop grid like the windows (offset: the run's first frame there), so a
+    // stretch is decided alike in the runs that hold it, but at a run's edges (its last window ends at the run's end,
+    // and the neighbour rule sees no block past it); the part before the run's first grid frame joins its first block
+    // (no window of the run starts in it alone).
+    static func silencedRanges(count: Int, starts: [Int], scores: [Float?], offset: Int = 0) -> [Range<Int>] {
+        let first = firstOnGrid(offset)
+        let bounds = [0] + Array(stride(from: first > 0 ? first + speakerHop : speakerHop, to: count, by: speakerHop))
+            + [count]
+        let blocks = Array(bounds.dropLast()), ends = Array(bounds.dropFirst())
+        let others = zip(blocks, ends).map { block, end -> Bool in
             let over = zip(starts, scores).filter { $0.0 < end && $0.0 + speakerWindow > block }.compactMap(\.1)
             return !over.isEmpty && over.allSatisfy { $0 < speakerThreshold }
         }
         var ranges: [Range<Int>] = []
         for (i, block) in blocks.enumerated() where others[max(i - 1, 0)...min(i + 1, blocks.count - 1)]
             .allSatisfy({ $0 }) {
-            let end = min(block + speakerHop, count)
+            let end = ends[i]
             if let last = ranges.last, last.upperBound == block {
                 ranges[ranges.count - 1] = last.lowerBound..<end
             } else {

@@ -6,9 +6,11 @@ Input lines: merge<TAB>name<TAB>apple<TAB>whisper (as finishAndDispatch combines
 start<TAB>name<TAB>current<TAB>segment (startChange; "none" for nil), runstart<TAB>name<TAB>frames<TAB>chunk starts
 or endchunks<TAB>name<TAB>run start<TAB>chunk starts<TAB>texts (lists comma-separated, a text "-" for nil; prints
 start|texts), doubt<TAB>name<TAB>apple<TAB>whisper<TAB>silenced ("-": it failed; the final text is made as merge
-makes it; silenced "yes" when the speaker gate silenced another voice; prints "send" for nil), mic<TAB>name<TAB>devices<TAB>preferred (Microphone.chosen; devices
+makes it; silenced "yes" when the speaker gate silenced another voice; prints "send" for nil),
+mic<TAB>name<TAB>devices<TAB>preferred (Microphone.chosen; devices
 "name/transport fourcc[/default];…", the transport "0" when unreadable, preferred "name;…"; prints the chosen name
-or "none"), gate<TAB>name<TAB>seconds<TAB>window scores (Config.speakerWindows of a run that long; a score "-" for a
+or "none"), gate<TAB>name<TAB>seconds<TAB>at<TAB>window scores (Config.speakerWindows of a run that long from that
+second; a "-" for a
 quiet window; prints the silenced ranges in seconds or "none"),
 result<TAB>name<TAB>apple<TAB>whisper<TAB>send<TAB>silenced<TAB>seconds (Transcript.result made as the app makes
 it, whisper "-" when it failed, "~" when it is not installed; prints the JSON, "|" and the doubt that holds Return,
@@ -56,11 +58,12 @@ while let line = readLine() {
         let texts = p[4].split(separator: ",", omittingEmptySubsequences: false).map { $0 == "-" ? nil : String($0) }
         let end = m.endChunks(texts, chunkStarts: p[3].split(separator: ",").map { Int($0)! }, runStart: Int(p[2])!)
         print("\(p[1])\t\(end.start)|\(end.texts.joined(separator: ","))")
-    case ("gate", 4):
-        let count = Int(Double(p[2])! * 16000), starts = Config.speakerWindows(count: count)
-        let scores = p[3].split(separator: ",").map { $0 == "-" ? nil : Float($0)! }
+    case ("gate", 5):
+        let count = Int(Double(p[2])! * 16000), offset = Int(Double(p[3])! * 16000)
+        let starts = Config.speakerWindows(count: count, offset: offset)
+        let scores = p[4].split(separator: ",").map { $0 == "-" ? nil : Float($0)! }
         guard scores.count == starts.count else { print("\(p[1])\t\(starts.count) windows"); continue }
-        let ranges = Config.silencedRanges(count: count, starts: starts, scores: scores)
+        let ranges = Config.silencedRanges(count: count, starts: starts, scores: scores, offset: offset)
             .map { String(format: "%.1f-%.1f", Double($0.lowerBound) / 16000, Double($0.upperBound) / 16000) }
         print("\(p[1])\t\(ranges.isEmpty ? "none" : ranges.joined(separator: ","))")
     case ("result", 7):

@@ -15,8 +15,9 @@
 - mics.tsv (name, devices, preferred, expected): which input a recording uses (Microphone.chosen), devices as
   "name/transport fourcc (0: unreadable)[/default];…" in CoreAudio's order, preferred as microphones.txt lists
   them ("name;…").
-- gates.tsv (name, seconds, scores, expected): which parts of a run the speaker gate silences (Config.silencedRanges)
-  from its window scores, one per Config.speakerWindows window ("-": quiet, not scored), as "from-to" seconds.
+- gates.tsv (name, seconds, at, scores, expected): which parts of a run (starting `at` seconds into the recording) the
+  speaker gate silences (Config.silencedRanges) from its window scores, one per Config.speakerWindows window ("-":
+  quiet, not scored), as "from-to" seconds.
 - results.tsv (name, apple, whisper, send, silenced, seconds, expected): the JSON a done recording hands to other
   programs (TranscriptResult) with its holds, then "|" and the doubt that holds Return ("send": none), made from the
   engines' texts as the app makes them; whisper "-" when it failed, "~" when it is not installed. The doubt is a hold
@@ -91,7 +92,7 @@ def mic_failures(binary):
 
 def gate_failures(binary):
     cases = read("gates.tsv")
-    got = run(binary, (f"gate\t{c['name']}\t{c['seconds']}\t{c['scores']}" for c in cases))
+    got = run(binary, (f"gate\t{c['name']}\t{c['seconds']}\t{c['at']}\t{c['scores']}" for c in cases))
     return [(c, got[c["name"]]) for c in cases if got[c["name"]] != c["expected"]]
 
 

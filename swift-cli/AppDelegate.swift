@@ -25,7 +25,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var startChanges: [String] = [] // logged: how each change of the recognizer's start was read
     private var gateProblemLogged = false // once per recording: why there is no speaker gate
     private var gateSilenced = false // on whisperQueue: a run of this recording had another voice silenced
-    private var gateScores: [Int: Float?] = [:] // on whisperQueue: each window scored so far, by its first frame
+    // Each window of heard16k scored so far, by its first frame: taken as it is heard (under tapLock: a copy of it to
+    // gateQueue), so a run finds most of its windows done. gateQueue: one extractor call at a time.
+    private var gateScores: [Int: Float?] = [:] // under gateLock
+    private let gateLock = NSLock()
+    private let gateQueue = DispatchQueue(label: "voice-agent.gate", qos: .userInitiated)
+    private var nextGateWindow = 0 // under tapLock: the first frame of the next window to score while heard
+    private var lockWaitTimedOut = false // on whisperQueue: a run waited Config.whisperTimeout for the Whisper lock
     private var whisperFile: AVAudioFile? // 16 kHz mono copy of the session for Whisper
     private static let whisperWAV: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16000,
                                                     AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
@@ -607,6 +613,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let samples = converted.floatChannelData?[0] {
             heard16k.append(contentsOf: UnsafeBufferPointer(start: samples, count: Int(converted.frameLength)))
         }
+        while heard16k.count >= nextGateWindow + Config.speakerWindow {
+            // A copy: a slice would keep heard16k shared, so the next append would copy all of it.
+            let start = nextGateWindow, window = Array(heard16k[start..<start + Config.speakerWindow])
+            nextGateWindow += Config.speakerHop
+            gateQueue.async {
+                guard let gate = self.gate() else { return }
+                let score = gate.score(window[...])
+                self.gateLock.lock()
+                self.gateScores[start] = score
+                self.gateLock.unlock()
+            }
+        }
         if peak >= peakLevel * Config.pauseQuietRatio {
             quietSeconds = 0
             if !spokeSinceSnapshot {
@@ -672,21 +690,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // On whisperQueue: the run with the parts only other voices fill silenced (nil: nothing to silence, or no gate),
-    // and a log line of its window scores for tuning Config.speakerThreshold.
-    private func gated(_ samples: [Float], from start: Int) -> [Float]? {
-        // microphone is set as the recording starts, before any run is queued.
+    // On gateQueue: the speaker gate, when it gates this recording's microphone (set as the recording starts, before
+    // any audio); else nil, logged once.
+    private func gate() -> SpeakerGate? {
         guard let gate = SpeakerGate.shared, gate.hears(inputDeviceName) else {
             let why = SpeakerGate.shared.map { "enrolled on \"\($0.microphone)\", not \"\(inputDeviceName)\"" }
             if !gateProblemLogged { log("gate off pid=\(getpid()) \(why ?? SpeakerGate.problem)") }
             gateProblemLogged = true
             return nil
         }
+        return gate
+    }
+
+    // On whisperQueue: the run with the parts only other voices fill silenced (nil: nothing to silence, or no gate),
+    // and a log line of its window scores for tuning Config.speakerThreshold.
+    private func gated(_ samples: [Float], from start: Int) -> [Float]? {
         let started = Date()
-        let result = gate.gate(samples, known: gateScores, offset: start)
-        for (window, score) in zip(Config.speakerWindows(count: samples.count), result.scores) {
+        let gated = gateQueue.sync { () -> (kept: [Float]?, scores: [Float?], silenced: [Range<Int>])? in
+            guard let gate = gate() else { return nil }
+            gateLock.lock()
+            let known = gateScores
+            gateLock.unlock()
+            return gate.gate(samples, known: known, offset: start)
+        }
+        guard let result = gated else { return nil }
+        gateLock.lock()
+        for (window, score) in zip(Config.speakerWindows(count: samples.count, offset: start), result.scores) {
             gateScores[start + window] = score
         }
+        gateLock.unlock()
         let seconds = { (frames: Int) in String(format: "%.1f", Double(frames) / 16000) }
         let silenced = result.silenced.map { seconds($0.lowerBound) + "-" + seconds($0.upperBound) }
         log("gate pid=\(getpid()) at=\(seconds(start)) seconds=\(seconds(samples.count)) "
@@ -753,12 +785,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let lock = open(Config.whisperLockPath, O_CREAT | O_RDWR, 0o600)
         defer { if lock >= 0 { close(lock) } }
-        let lockDeadline = Date().addingTimeInterval(Config.whisperTimeout)
+        // Once a run waited that long, the holder is a long job (a replay held it through a 36 s dictation: three runs
+        // waited 10 s each, 29 s to a text without Whisper's), so later runs take the lock only if it is free.
+        let lockDeadline = Date().addingTimeInterval(lockWaitTimedOut ? 0 : Config.whisperTimeout)
         while lock >= 0, flock(lock, LOCK_EX | LOCK_NB) != 0 {
             processLock.lock()
             let waiting = wanted()
             processLock.unlock()
-            guard waiting, Date() < lockDeadline else { return nil }
+            guard waiting else { return nil }
+            guard Date() < lockDeadline else {
+                lockWaitTimedOut = true
+                return nil
+            }
             Thread.sleep(forTimeInterval: 0.1)
         }
         let timeout = max(Config.whisperTimeout, seconds * Config.whisperTimeoutPerSecond)

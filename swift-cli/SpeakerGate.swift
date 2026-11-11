@@ -93,19 +93,23 @@ final class SpeakerGate {
         return norm > 0 ? vector.map { $0 / norm } : nil
     }
 
-    // The run with the parts only other voices fill silenced (nil: nothing silenced), and what decided it. known: the
-    // scores of windows an earlier run of the same recording took, by first frame from `offset` (the run's start):
-    // the same audio, so not embedded again.
+    // A window's similarity to the voiceprint (nil: quiet, not scored; see Config.isVoiced).
+    func score(_ window: ArraySlice<Float>) -> Float? {
+        guard Config.isVoiced(window), let vector = embedding(window) else { return nil }
+        return zip(vector, voiceprint).reduce(0) { $0 + $1.0 * $1.1 }
+    }
+
+    // The run with the parts only other voices fill silenced (nil: nothing silenced), and what decided it. offset: the
+    // run's first frame in the recording; known: the scores of windows already taken, by first frame there (the same
+    // audio, so not embedded again).
     func gate(_ samples: [Float], known: [Int: Float?] = [:], offset: Int = 0)
         -> (kept: [Float]?, scores: [Float?], silenced: [Range<Int>]) {
-        let starts = Config.speakerWindows(count: samples.count)
+        let starts = Config.speakerWindows(count: samples.count, offset: offset)
         let scores = starts.map { start -> Float? in
             if let score = known[offset + start] { return score }
-            let window = samples[start..<start + Config.speakerWindow]
-            guard Config.isVoiced(window), let vector = embedding(window) else { return nil }
-            return zip(vector, voiceprint).reduce(0) { $0 + $1.0 * $1.1 }
+            return score(samples[start..<start + Config.speakerWindow])
         }
-        let silenced = Config.silencedRanges(count: samples.count, starts: starts, scores: scores)
+        let silenced = Config.silencedRanges(count: samples.count, starts: starts, scores: scores, offset: offset)
         guard !silenced.isEmpty else { return (nil, scores, []) }
         var kept = samples
         for range in silenced { kept.replaceSubrange(range, with: repeatElement(0, count: range.count)) }
