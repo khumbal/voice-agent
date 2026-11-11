@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Extract Config and the transcript functions from the app source into a stdin harness, so tests run the shipped
-code, not a copy. It reads the vocabulary file given here instead of the user's ~/.config copy.
+"""Combine the app's Config.swift and Transcript.swift into a stdin harness, so tests run the shipped code, not a
+copy. It reads the vocabulary file given here instead of the user's ~/.config copy.
 Input lines: merge<TAB>name<TAB>apple<TAB>whisper (as finishAndDispatch combines them), correct<TAB>name<TAB>text
 start<TAB>name<TAB>current<TAB>segment (startChange; "none" for nil), runstart<TAB>name<TAB>frames<TAB>chunk starts
 or endchunks<TAB>name<TAB>run start<TAB>chunk starts<TAB>texts (lists comma-separated, a text "-" for nil; prints
@@ -8,24 +8,28 @@ start|texts), doubt<TAB>name<TAB>apple<TAB>whisper<TAB>silenced ("-": it failed;
 makes it; silenced "yes" when the speaker gate silenced another voice; prints "send" for nil), mic<TAB>name<TAB>devices<TAB>preferred (Microphone.chosen; devices
 "name/transport fourcc[/default];…", the transport "0" when unreadable, preferred "name;…"; prints the chosen name
 or "none"), gate<TAB>name<TAB>seconds<TAB>window scores (Config.speakerWindows of a run that long; a score "-" for a
-quiet window; prints the silenced ranges in seconds or "none"), voiced<TAB>name<TAB>frames (one 100 ms frame each,
-"1" at -20 dB, "q" -45 dB, "r" -55 dB, "0" -60 dB; prints Config.isVoiced).
-Output lines: name<TAB>result. Usage: mkharness.py <app.swift> <vocabulary.txt> <out.swift>"""
-import json, sys
+quiet window; prints the silenced ranges in seconds or "none"),
+result<TAB>name<TAB>apple<TAB>whisper<TAB>send<TAB>silenced<TAB>seconds (Transcript.result made as the app makes
+it, whisper "-" when it failed; prints the JSON, "|" and the doubt that holds Return, "send" for none), voiced<TAB>name<TAB>frames (one 100 ms frame each, "1" at -20 dB, "q" -45 dB,
+"r" -55 dB, "0" -60 dB; prints Config.isVoiced).
+Output lines: name<TAB>result. Usage: mkharness.py <swift-cli dir> <vocabulary.txt> <out.swift>"""
+import json, os, sys
 
 source, vocabulary, out = sys.argv[1:4]
-src = open(source, encoding="utf-8").read().split("\n")
 home_path = 'NSHomeDirectory() + "/.config/voice-agent/vocabulary.txt"'
-config_end = next(i for i, l in enumerate(src) if l.startswith("enum TargetMode"))  # Microphone, after Config, too
-config = "\n".join(src[src.index("struct Config {"):config_end])
+
+
+def body(name):  # the file without its imports: the harness has its own
+    text = open(os.path.join(source, name), encoding="utf-8").read()
+    return "\n".join(line for line in text.split("\n") if not line.startswith("import "))
+
+
+config = body("Config.swift")  # Microphone too
 if config.count(home_path) != 1:
     sys.exit(f"mkharness: expected one {home_path} in Config")
 config = config.replace(home_path, json.dumps(vocabulary))
-start = next(i for i, l in enumerate(src) if "private func runStart" in l)
-end = next(i for i, l in enumerate(src) if "private func pruneRecordings" in l)
-funcs = "\n".join(src[start:end]).replace("    private func ", "    func ")
 main = r'''
-let m = M()
+let m = Transcript.self
 while let line = readLine() {
     let p = line.components(separatedBy: "\t")
     switch (p.first, p.count) {
@@ -52,6 +56,15 @@ while let line = readLine() {
         let ranges = Config.silencedRanges(count: count, starts: starts, scores: scores)
             .map { String(format: "%.1f-%.1f", Double($0.lowerBound) / 16000, Double($0.upperBound) / 16000) }
         print("\(p[1])\t\(ranges.isEmpty ? "none" : ranges.joined(separator: ","))")
+    case ("result", 7):
+        let whisper = p[3] == "-" ? nil : m.collapseRepeats(p[3])
+        let final = m.finalText(apple: p[2], whisper: whisper?.isEmpty == false ? whisper : nil)
+        var made = m.result(final: final, apple: p[2], whisper: whisper, installed: true, send: p[4] == "yes",
+                            silenced: p[5] == "yes")
+        made.result.id = "id-1"
+        made.result.outcome = .done
+        made.result.seconds = Double(p[6])!
+        print("\(p[1])\t\(String(decoding: made.result.json, as: UTF8.self))|\(made.doubt ?? "send")")
     case ("voiced", 3):
         // After a loud frame, so the window starts mid-array as a run's windows do.
         let levels: [Character: Float] = ["1": 0.1, "0": 0.001, "q": 0.0056, "r": 0.0018]
@@ -74,4 +87,4 @@ while let line = readLine() {
 '''
 open(out, "w", encoding="utf-8").write(
     "import Foundation\nimport CoreAudio\nimport NaturalLanguage\n"
-    + config + "\nstruct M {\n" + funcs + "\n}\n" + main)
+    + config + "\n" + body("Transcript.swift") + "\n" + main)

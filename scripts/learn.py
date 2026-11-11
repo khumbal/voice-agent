@@ -33,9 +33,7 @@ PENDING = os.path.join(LEARN, "pending.md")
 BACKUPS = os.path.join(LEARN, "backups")
 HERE = os.path.dirname(os.path.abspath(__file__))
 TESTS = next(p for p in (os.path.join(HERE, "tests"), os.path.join(HERE, "..", "tests")) if os.path.isdir(p))
-SOURCE = next(p for p in (os.path.join(HERE, "VoiceAgentCLI.swift"), os.path.join(HERE, "..", "swift-cli",
-                                                                                "VoiceAgentCLI.swift"))
-              if os.path.exists(p))
+SOURCE = next(p for p in (os.path.join(HERE, "swift-cli"), os.path.join(HERE, "..", "swift-cli")) if os.path.isdir(p))
 sys.path.insert(0, TESTS)
 import check  # noqa: E402
 from check import correction_failures, merged, read, reference_cer  # noqa: E402
@@ -466,7 +464,7 @@ def learn(force=False, dry_run=False):
     with tempfile.TemporaryDirectory(prefix="voice-agent-learn-") as work:
         # The app source and test tables as they are now: install.sh may replace the installed copies while a round
         # runs, and base and candidates must be scored against the same ones.
-        source = shutil.copy(SOURCE, os.path.join(work, "app.swift"))
+        source = shutil.copytree(SOURCE, os.path.join(work, "swift-cli"))
         check.HERE = shutil.copytree(TESTS, os.path.join(work, "tests"), ignore=shutil.ignore_patterns("__pycache__"))
         base, unreplayable = None, None
         for kind, item in [("correction", c) for c in corrections] + [("sentence", s) for s in sentences]:

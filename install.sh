@@ -13,7 +13,7 @@ echo "1. Building VoiceAgent.app..."
 APP=~/Applications/VoiceAgent.app
 mkdir -p "$APP/Contents/MacOS"
 cp swift-cli/Info.plist "$APP/Contents/Info.plist"
-swiftc swift-cli/VoiceAgentCLI.swift -o "$APP/Contents/MacOS/voice-agent" \
+swiftc swift-cli/*.swift -o "$APP/Contents/MacOS/voice-agent" \
   -framework Cocoa \
   -framework Speech \
   -framework AVFoundation
@@ -116,16 +116,29 @@ cd ..
 echo "6. Installing the vocabulary learner (automatic learning is paused)..."
 # A copy outside ~/Desktop: a background job reading the Desktop makes macOS ask for folder access.
 LEARN=$DATA/learn
-mkdir -p "$LEARN/tests"
+mkdir -p "$LEARN/tests" "$LEARN/swift-cli"
+rm -f "$LEARN/VoiceAgentCLI.swift" # the app source before it was split into swift-cli/*.swift
 # Each file replaced whole (copy, then rename): a round may be running and read them.
-for file in scripts/learn.py swift-cli/VoiceAgentCLI.swift tests/*.py tests/*.tsv; do
-    target=$LEARN/$( [[ $file == tests/* ]] && echo tests/ )$(basename "$file")
+for file in scripts/learn.py swift-cli/*.swift tests/*.py tests/*.tsv; do
+    target=$LEARN/${file#scripts/} # learn.py at the top, tests/ and swift-cli/ as they are here
     cp "$file" "$target.new"
     mv "$target.new" "$target"
 done
 LEARNER=~/Library/LaunchAgents/com.local.voiceagent.learn.plist
 launchctl disable "gui/$(id -u)/com.local.voiceagent.learn"
 launchctl bootout "gui/$(id -u)" "$LEARNER" 2>/dev/null || true
+
+echo "7. Installing the MCP server (agents can listen to you and speak back)..."
+# Copied outside ~/Desktop like the learner: an agent's background process reading the Desktop makes macOS ask.
+mkdir -p "$DATA/mcp"
+cp mcp/server.mjs "$DATA/mcp/server.mjs.new"
+mv "$DATA/mcp/server.mjs.new" "$DATA/mcp/server.mjs"
+if command -v claude >/dev/null; then
+    claude mcp remove --scope user voice-agent >/dev/null 2>&1 || true
+    claude mcp add --scope user voice-agent -- node "$DATA/mcp/server.mjs"
+else
+    echo "⚠️  'claude' CLI not found: add the stdio server 'node $DATA/mcp/server.mjs' to your agent by hand"
+fi
 
 echo "🎉 Installation complete! Press Control-Option-Space: tap to type, hold to send, Esc to cancel."
 echo "   Automatic vocabulary learning is paused; edit user.txt or work/<name>.txt in ~/.config/voice-agent/."

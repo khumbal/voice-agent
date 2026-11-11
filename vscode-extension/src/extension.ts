@@ -122,7 +122,18 @@ async function takeSnapshot(id: string, until: number): Promise<string> {
     if (Date.now() > until) return 'error expired';
     snapshots.set(id, target);
     while (snapshots.size > MAX_SNAPSHOTS) snapshots.delete(snapshots.keys().next().value!);
-    return target.kind === 'terminal' ? `terminal ${target.terminal.name}` : target.kind;
+    const place = target.kind === 'terminal' ? `terminal ${target.terminal.name}` : target.kind;
+    const folder = targetFolder(target);
+    return folder ? `${place}\t${folder}` : place;
+}
+
+// The folder the text is going to, after a tab in the snapshot's ack: the recorder loads that project's corrections.
+// A terminal's shell-reported cwd only, which follows a `cd`; the cwd it was created in may no longer be where it is,
+// and a wrong project's corrections would rewrite correct words, so without shell integration there is none.
+function targetFolder(target: Target): string | undefined {
+    if (target.kind === 'terminal') return target.terminal.shellIntegration?.cwd?.fsPath;
+    if (target.kind === 'editor') return vscode.workspace.getWorkspaceFolder(target.document.uri)?.uri.fsPath;
+    return undefined;
 }
 
 async function currentTarget(): Promise<Target> {

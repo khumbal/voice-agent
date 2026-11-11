@@ -17,6 +17,9 @@
   them ("name;…").
 - gates.tsv (name, seconds, scores, expected): which parts of a run the speaker gate silences (Config.silencedRanges)
   from its window scores, one per Config.speakerWindows window ("-": quiet, not scored), as "from-to" seconds.
+- results.tsv (name, apple, whisper, send, silenced, seconds, expected): the JSON a done recording hands to other
+  programs (TranscriptResult) with its holds, then "|" and the doubt that holds Return ("send": none), made from the
+  engines' texts as the app makes them; whisper "-" when it failed. The doubt is a hold whether or not it was a send.
 - voiced.tsv (name, frames, expected): whether a 1.5 s window is scored (Config.isVoiced), one character per 100 ms
   frame: "1" -20 dB, "q" -45 dB, "r" -55 dB (either side of Config.speakerQuietDB), "0" -60 dB.
 Usage: check.py <harness-binary> [--update]"""
@@ -97,6 +100,13 @@ def voiced_failures(binary):
     return [(c, got[c["name"]]) for c in cases if got[c["name"]] != c["expected"]]
 
 
+def result_failures(binary):
+    cases = read("results.tsv")
+    got = run(binary, ("\t".join(["result", c["name"], c["apple"], c["whisper"], c["send"], c["silenced"], c["seconds"]])
+                       for c in cases))
+    return [(c, got[c["name"]]) for c in cases if got[c["name"]] != c["expected"]]
+
+
 def reference_cer(golden, outputs):  # mean over the rows that have a reference reading
     scored = [g for g in golden if g["reference"]]
     return sum(cer(g["reference"], outputs[g["name"]]) for g in scored) / len(scored)
@@ -128,6 +138,10 @@ def main():
     for c, got in voiced:
         print(f"FAIL voiced {c['name']}\n  got  {got}\n  want {c['expected']}")
 
+    results = result_failures(binary)
+    for c, got in results:
+        print(f"FAIL result {c['name']}\n  got  {got}\n  want {c['expected']}")
+
     golden = read("merge_golden.tsv")
     got = merged(binary, {g["name"]: (g["apple"], g["whisper"]) for g in golden})
     changed = [g for g in golden if got[g["name"]] != g["expected"]]
@@ -141,7 +155,8 @@ def main():
           f" whisper {reference_cer(golden, {g['name']: g['whisper'] for g in golden}):.4f}"
           f" merged {reference_cer(golden, got):.4f}")
 
-    failed = len(failures) + len(starts) + len(chunks) + len(doubts) + len(mics) + len(gates) + len(voiced)
+    failed = (len(failures) + len(starts) + len(chunks) + len(doubts) + len(mics) + len(gates) + len(voiced)
+              + len(results))
     if update and changed:
         for g in golden:
             g["expected"] = got[g["name"]]
@@ -152,7 +167,7 @@ def main():
     verdict = "ok" if not failed else f"{failed} failed"
     print(f"corrections {len(read('corrections.tsv'))}, starts {len(read('starts.tsv'))}, "
           f"chunks {len(read('chunks.tsv'))}, doubts {len(read('doubts.tsv'))}, mics {len(read('mics.tsv'))}, "
-          f"gates {len(read('gates.tsv'))}, voiced {len(read('voiced.tsv'))}, "
+          f"gates {len(read('gates.tsv'))}, voiced {len(read('voiced.tsv'))}, results {len(read('results.tsv'))}, "
           f"merge {len(golden)}: {verdict}")
     sys.exit(1 if failed else 0)
 

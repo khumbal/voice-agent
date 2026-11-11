@@ -8,7 +8,7 @@ directory = sys.argv[1]
 vocabulary = os.path.join(directory, "vocabulary.txt")
 source = os.path.join(directory, "layers.swift")
 binary = os.path.join(directory, "layers")
-subprocess.run([sys.executable, "mkharness.py", "../swift-cli/VoiceAgentCLI.swift", vocabulary, source], check=True)
+subprocess.run([sys.executable, "mkharness.py", "../swift-cli", vocabulary, source], check=True)
 subprocess.run(["swiftc", "-O", source, "-o", binary], check=True)
 os.makedirs(os.path.join(directory, "work"))
 

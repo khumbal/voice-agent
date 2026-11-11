@@ -68,7 +68,9 @@ cd voice-agent
 3. installs `toggle-voice.sh` in `~/.local/bin/`, which starts or stops a recording from a script or shortcut;
 4. installs a LaunchAgent that listens for `Control-Option-Space`;
 5. builds and installs the VS Code extension;
-6. installs the vocabulary learner but pauses its automatic LaunchAgent.
+6. installs the vocabulary learner but pauses its automatic LaunchAgent;
+7. registers the MCP server with Claude Code (`claude mcp add --scope user voice-agent`), when the `claude` CLI is
+   installed.
 
 Then:
 
@@ -104,6 +106,32 @@ open -n -g ~/Applications/VoiceAgent.app --args tmux
 
 `scripts/open-claude-terminal.zsh [dir]` asks the extension to open a new VS Code terminal tab in `dir` and start
 Claude Code there. `VOICE_AGENT_VSCODE_APP` picks the VS Code app by name or path (default: `Visual Studio Code`).
+
+### Letting an agent listen and speak (MCP)
+
+`mcp/server.mjs` is a stdio MCP server with two tools, so an agent such as Claude Code can hear you and answer aloud:
+
+- **`listen`** starts one recording (the same HUD, ended by silence, a hotkey tap or Esc) and returns what you said,
+  with `intent` and `holds` (see below). The text is typed nowhere else. A hotkey press during it finishes it rather
+  than starting a second recording. One `listen` at a time; it gives up after `timeout_seconds` (default 240).
+- **`speak`** reads a short reply aloud with `say` (voice `Kanya`, Thai, by default). It stops as soon as you start
+  dictating, so the microphone does not hear it.
+
+Any other program can do what `listen` does: run `open -n -g -W ~/Applications/VoiceAgent.app --args listen <id>`
+(`<id>`: letters, digits or `-`), then read `~/.local/share/voice-agent/results/<id>.json`. While it records,
+`results/<id>.pid` holds its pid; `kill -HUP` cancels it. No result file means it was stopped before it could write one.
+
+Every result, here and for hooks, has this shape:
+
+```json
+{"v": 1, "id": "…", "outcome": "done", "text": "ช่วย run test ให้หน่อย", "apple": "…", "whisper": "…",
+ "intent": "send", "holds": [], "seconds": 3.2}
+```
+
+`outcome` is `done`, `cancelled`, `empty` or `failed` (with `error`). `intent` is `send` when you held the key to send
+and `type` otherwise. `holds` lists why the app itself would not press Return: a dangerous command, the two engines
+disagreeing, or another voice in the recording. **Act on the text without asking only when `intent` is `send` and
+`holds` is empty.**
 
 ## Configuration
 
@@ -151,6 +179,17 @@ never a virtual device. To list the names it sees and the one it would pick:
 ~/Applications/VoiceAgent.app/Contents/MacOS/voice-agent microphones
 ```
 
+### `hooks.txt`
+
+```text
+# One command per line, run by zsh after every dictation that has text, wherever it was typed.
+python3 ~/bin/log-dictation.py
+```
+
+Each command gets the dictation's result (see the MCP section) as JSON on stdin; the text never appears on its command
+line. Hooks run after the text is delivered and are not waited for, so a slow or failing one changes nothing for the
+dictation; their output is discarded.
+
 ### Speaker gate
 
 `install.sh` downloads [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)'s C library and the CAM++ zh+en speaker
@@ -184,6 +223,27 @@ python3 ~/.local/share/voice-agent/learn/learn.py --status   # what it has seen 
 python3 ~/.local/share/voice-agent/learn/learn.py --revert   # undo the last legacy vocabulary change
 ```
 
+### Learning from your edits
+
+`scripts/learn_edits.py` reads only local files and sends nothing anywhere. It pairs each dictation in the log with
+the prompt you sent to Claude Code after editing it (`~/.claude/history.jsonl` records the text and the project). An
+English term you corrected from the same spelling in two or more dictations of one project becomes a proposed
+`term = heard` line for `work/<project>.txt`, where `<project>` is the project folder's name with anything other than
+letters, digits, `_` or `-` turned into `-`. It skips spellings you have sent unchanged in that project, because a
+correction rewrites the word wherever it is said. `--accept` checks each proposal again and skips one the latest
+history no longer supports.
+
+```bash
+python3 scripts/learn_edits.py               # list numbered proposals
+python3 scripts/learn_edits.py --accept 1 3  # add them to work/<project>.txt (the old file is backed up)
+python3 scripts/learn_edits.py --reject 2    # never propose those spellings again
+```
+
+Numbers refer to the last listing until you list again. The listing and the rejected spellings are kept in
+`~/.local/share/voice-agent/learn/edits.json`, backups in `learn/backups/work-<project>-<time>.txt`.
+
+A work file is loaded only while `active-work.txt` names it (see Vocabulary).
+
 ## How it works
 
 ```
@@ -197,11 +257,13 @@ Control-Option-Space ─► hotkey listener (LaunchAgent)
                            │
                            ├─► VS Code extension (vscode:// link + token) ─► terminal tab or editor
                            ├─► any other app: typed at the cursor (Accessibility)
-                           └─► tmux send-keys
+                           ├─► tmux send-keys
+                           ├─► `listen <id>`: results/<id>.json ─► MCP server ─► agent
+                           └─► then each hooks.txt command, the result on stdin
 ```
 
-- The hotkey listener and the recorder are the same binary (`swift-cli/VoiceAgentCLI.swift`); the recorder runs as
-  its own app instance so it owns the Microphone and Speech permissions.
+- The hotkey listener and the recorder are the same binary, built from `swift-cli/*.swift` (`main.swift` reads the
+  arguments); the recorder runs as its own app instance so it owns the Microphone and Speech permissions.
 - The VS Code extension only accepts links carrying a token from `~/.local/share/voice-agent/uri-token`, which only
   your user can read, so a link on a web page cannot type into your terminal. It confirms each delivery with an ack
   file; without one the recorder keeps the text on the clipboard.
@@ -212,21 +274,24 @@ Control-Option-Space ─► hotkey listener (LaunchAgent)
 | `~/Library/Caches/voice-agent/` | The latest 200 recordings, for re-measuring changes on real speech |
 | `~/.local/share/voice-agent/` | Whisper models, the URI token, signing keychain, learner state |
 | `~/.local/share/voice-agent/speaker/` | The speaker gate's library, model and your voiceprint |
-| `~/.config/voice-agent/` | Your vocabulary layers and microphones |
+| `~/.local/share/voice-agent/results/` | `listen` results until read; the next `listen` removes any over an hour old |
+| `~/.local/share/voice-agent/mcp/` | The installed copy of the MCP server |
+| `~/.config/voice-agent/` | Your vocabulary layers, microphones and hooks |
 
 ## Development
 
 ```bash
-tests/run.sh            # transcript merge, corrections, chunking, microphone choice, vocabulary layers
+tests/run.sh            # transcript merge, corrections, chunking, microphone choice, vocabulary layers, MCP server
 tests/run.sh --update   # accept new merge output into tests/merge_golden.tsv (review the printed diff first)
 ```
 
-The tests build a harness from the app source and run example transcripts through the merge, so a change that
-alters dictation output fails here before `install.sh` builds anything.
+The tests build a harness from `swift-cli/Config.swift` and `Transcript.swift` and run example transcripts through
+the merge, so a change that alters dictation output fails here before `install.sh` builds anything.
 
 | Directory | Contents |
 |---|---|
-| `swift-cli/` | The macOS app: hotkey listener, recorder, HUD, merge |
+| `swift-cli/` | The macOS app: hotkey listener, recorder, HUD, merge (`Transcript.swift`) |
+| `mcp/` | The MCP server that lets agents listen and speak |
 | `vscode-extension/` | Delivers text to the focused terminal or editor and opens Claude Code terminals |
 | `scripts/` | Signing, the toggle script, the learner, starter config files |
 | `tests/` | Golden transcript tables and the harness that runs them |
@@ -240,6 +305,7 @@ rm -f ~/Library/LaunchAgents/com.local.voiceagent.{hotkey,learn}.plist
 launchctl enable gui/$(id -u)/com.local.voiceagent.learn   # undoes the "disabled" override install.sh sets
 rm -rf ~/Applications/VoiceAgent.app ~/.local/bin/toggle-voice.sh
 code --uninstall-extension local.voice-agent-terminal
+claude mcp remove --scope user voice-agent
 security delete-keychain ~/.local/share/voice-agent/signing.keychain-db   # the app's signing certificate
 # Optional: your settings, models, recordings and logs
 rm -rf ~/.config/voice-agent ~/.local/share/voice-agent ~/Library/Caches/voice-agent ~/Library/Logs/voice-agent*.log
