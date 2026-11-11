@@ -1,7 +1,7 @@
 // node --test mcp/: the MCP server against a stand-in recorder and `say`, never the real microphone or speaker.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -89,6 +89,21 @@ test('a busy result from a second recorder reads as a failure, not a cancel', as
     const busy = { outcome: 'failed', error: 'busy: another listen is recording', text: '', holds: [] };
     assert.equal((await listen({}, undefined, deps(writes(busy)))).content[0].text,
         'Recording failed: busy: another listen is recording');
+});
+
+test('listen prunes results over an hour old but never the recorder\'s lock', async () => {
+    const d = deps(writes(done));
+    mkdirSync(d.resultsDir, { recursive: true });
+    const old = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+    for (const name of ['listen.lock', 'gone.json', 'gone.pid']) {
+        writeFileSync(join(d.resultsDir, name), '');
+        utimesSync(join(d.resultsDir, name), old, old);
+    }
+    await listen({}, undefined, d);
+    // a lock removed while a recorder holds it would let the next one lock a new file: two recordings at once
+    assert.equal(existsSync(join(d.resultsDir, 'listen.lock')), true);
+    assert.equal(existsSync(join(d.resultsDir, 'gone.json')), false);
+    assert.equal(existsSync(join(d.resultsDir, 'gone.pid')), false);
 });
 
 test('speak gives the text to say on stdin, never as an argument, and clears speaking.pid', async () => {

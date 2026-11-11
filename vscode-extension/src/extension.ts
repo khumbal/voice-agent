@@ -122,7 +122,8 @@ async function takeSnapshot(id: string, until: number): Promise<string> {
     if (Date.now() > until) return 'error expired';
     snapshots.set(id, target);
     while (snapshots.size > MAX_SNAPSHOTS) snapshots.delete(snapshots.keys().next().value!);
-    const place = target.kind === 'terminal' ? `terminal ${target.terminal.name}` : target.kind;
+    // A tab in a terminal's name would read as the start of a folder.
+    const place = target.kind === 'terminal' ? `terminal ${target.terminal.name.replace(/\t/g, ' ')}` : target.kind;
     const folder = targetFolder(target);
     return folder ? `${place}\t${folder}` : place;
 }

@@ -113,13 +113,16 @@ Claude Code there. `VOICE_AGENT_VSCODE_APP` picks the VS Code app by name or pat
 
 - **`listen`** starts one recording (the same HUD, ended by silence, a hotkey tap or Esc) and returns what you said,
   with `intent` and `holds` (see below). The text is typed nowhere else. A hotkey press during it finishes it rather
-  than starting a second recording. One `listen` at a time; it gives up after `timeout_seconds` (default 240).
+  than starting a second recording. One `listen` at a time on the Mac: a second one, from any agent, ends at once as
+  `failed` with `busy`. It gives up after `timeout_seconds` (default 240).
 - **`speak`** reads a short reply aloud with `say` (voice `Kanya`, Thai, by default). It stops as soon as you start
   dictating, so the microphone does not hear it.
 
 Any other program can do what `listen` does: run `open -n -g -W ~/Applications/VoiceAgent.app --args listen <id>`
 (`<id>`: letters, digits or `-`), then read `~/.local/share/voice-agent/results/<id>.json`. While it records,
 `results/<id>.pid` holds its pid; `kill -HUP` cancels it. No result file means it was stopped before it could write one.
+Start the next `listen` after `open -W` returns, not as soon as the file appears: the recorder holds the one-at-a-time
+lock until it exits, a moment after writing its result.
 
 Every result, here and for hooks, has this shape:
 
@@ -146,6 +149,14 @@ None of these personal files belongs in the public repository.
 To select a work file, write its name without `.txt` to `~/.config/voice-agent/active-work.txt`. Names may contain
 letters, digits, `_`, or `-`. An empty or invalid selection loads no work file. If `active-work.txt` does not exist,
 the existing `vocabulary.txt` is loaded as the legacy work file; it is never overwritten by the installer.
+
+Text going to a VS Code terminal or editor also gets the `term = …` corrections of the work file named after its folder
+(`work/<folder name>.txt`, anything other than letters, digits, `_` or `-` turned into `-`), on top of the files
+above. The folder is the terminal's current directory as VS Code's shell integration reports it, or the editor file's
+workspace folder; a terminal in a subfolder, or a workspace opened at a parent folder, takes that folder's name. A
+spelling the work file also defines is corrected its way. When VS Code cannot tell, or the text goes elsewhere,
+only the files above apply. Example sentences
+in that file reach Whisper only while `active-work.txt` names it.
 
 All vocabulary files use the same format:
 
@@ -242,7 +253,7 @@ python3 scripts/learn_edits.py --reject 2    # never propose those spellings aga
 Numbers refer to the last listing until you list again. The listing and the rejected spellings are kept in
 `~/.local/share/voice-agent/learn/edits.json`, backups in `learn/backups/work-<project>-<time>.txt`.
 
-A work file is loaded only while `active-work.txt` names it (see Vocabulary).
+Its corrections apply to text going to that project's folder (see Vocabulary).
 
 ## How it works
 
@@ -274,7 +285,7 @@ Control-Option-Space ─► hotkey listener (LaunchAgent)
 | `~/Library/Caches/voice-agent/` | The latest 200 recordings, for re-measuring changes on real speech |
 | `~/.local/share/voice-agent/` | Whisper models, the URI token, signing keychain, learner state |
 | `~/.local/share/voice-agent/speaker/` | The speaker gate's library, model and your voiceprint |
-| `~/.local/share/voice-agent/results/` | `listen` results until read; the next `listen` removes any over an hour old |
+| `~/.local/share/voice-agent/results/` | `listen` results until read (removed by a `listen` an hour on) and `listen.lock` |
 | `~/.local/share/voice-agent/mcp/` | The installed copy of the MCP server |
 | `~/.config/voice-agent/` | Your vocabulary layers, microphones and hooks |
 

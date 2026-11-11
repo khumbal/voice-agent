@@ -70,6 +70,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // In VS Code, the window and the place in it (terminal tab, editor cursor) that had the keyboard then, as that
     // window's extension remembered it: set before vscodeSnapshotDone is left, nil when no window took the snapshot.
     private var vscodeSnapshot: (window: String, id: String)?
+    // The folder of that place, after a tab in the snapshot's ack ("terminal Claude\t/path"): whose work file's
+    // corrections the text gets. nil when the extension could not tell (no shell integration, an untitled file).
+    private var vscodeFolder: String?
     private let vscodeSnapshotDone = DispatchGroup()
     private var isFinishing = false
     private var isDispatched = false // the text has left: Esc can no longer cancel
@@ -457,6 +460,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         audioEngine.prepare()
+        step("prepared")
         do {
             try audioEngine.start()
             recordingStarted = Date()
@@ -1029,8 +1033,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let appleText = latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !appleText.isEmpty else {
             stopWhisper()
+            // The start's steps too: a press that never went live shows which one took the time.
             log("empty pid=\(getpid()) send=\(send) seconds=\(Int(recordedSeconds)) peak=\(peak) "
-                + "input=\"\(inputDeviceName)\"")
+                + "input=\"\(inputDeviceName)\" live=\(micLive) ms: \(startSteps.joined(separator: " "))")
             if peak < Config.silentInputPeak, recordedSeconds >= 1 {
                 abort("ไมค์ไม่มีเสียงเข้ามา (\(inputDeviceName)) — ลองพูดใหม่ "
                       + "หรือเลือกไมค์ใน ~/.config/voice-agent/microphones.txt")
@@ -1053,21 +1058,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let whisperText = text.flatMap { $0.isEmpty ? nil : Transcript.collapseRepeats($0) }
             let whisperInstalled = Config.whisperCLI.contains { FileManager.default.isExecutableFile(atPath: $0) }
                 && FileManager.default.fileExists(atPath: Config.whisperModel)
+            // The corrections depend on where the text goes: the snapshot is waited for here, not only at delivery
+            // (a recording shorter than its ack). Without one, the shared corrections.
+            _ = self.vscodeSnapshotDone.wait(timeout: .now() + Config.ackTimeout + 1)
+            let folder = self.vscodeFolder
             // The log keeps the raw texts, so new mishearings can be added to the vocabulary.
-            let final = Transcript.finalText(apple: appleText, whisper: whisperText)
+            let final = Transcript.finalText(apple: appleText, whisper: whisperText, folder: folder)
             let finalText = final.text
             // Without Whisper installed Apple's text is all there is: sent as before.
             let (result, doubt) = Transcript.result(final: final, apple: appleText,
                                                     whisper: tail == nil ? nil : whisperText ?? "",
                                                     installed: whisperInstalled, send: send,
-                                                    silenced: self.gateSilenced)
+                                                    silenced: self.gateSilenced, folder: folder)
             self.pruneRecordings()
             self.log("file=\(self.whisperURL.lastPathComponent) send=\(send) engine=\(whisperText == nil ? "apple" : "merged") "
                 + "whisper_ms=\(Int(Date().timeIntervalSince(started) * 1000)) apple=\"\(appleText)\" "
                 + "whisper=\"\(whisperText ?? "")\" final=\"\(finalText)\" "
                 + "starts=\"\(self.startChanges.joined(separator: " | "))\" "
                 + "early=\(early != nil) pause_runs=\(self.pauseRuns) server_runs=\(self.serverRuns) "
-                + "cli_runs=\(self.cliRuns) warm=\(self.warm) chunks=\(chunks.count) held=\"\(doubt ?? "")\"")
+                + "cli_runs=\(self.cliRuns) warm=\(self.warm) chunks=\(chunks.count) held=\"\(doubt ?? "")\" "
+                + "project=\(folder.map(Config.projectName) ?? "-")")
             self.stopWhisperServer() // the last run is over: give its memory back before the text is delivered
             DispatchQueue.main.async { self.dispatch(finalText, send: send, doubt: doubt, result: result) }
         }
@@ -1181,7 +1191,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // Hands how the recording ended to programs other than the target: the `listen <id>` caller's results/<id>.json
-    // and, when there is text (only once dispatched), each hooks.txt command. Once per recording; every ending calls it (dispatch, empty, abort, cancel).
+    // and, when there is text (only once dispatched), each hooks.txt command. Once per recording; every ending calls
+    // it (dispatch, empty, abort, cancel).
     private func report(_ outcome: TranscriptResult.Outcome, error: String? = nil) {
         guard !isReported else { return }
         isReported = true
@@ -1338,7 +1349,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             let outcome = self.awaitAck(id)
             // "error unfocused": focus.json was behind, the press was for another window; nothing was remembered.
-            if let outcome, !outcome.hasPrefix("error") { self.vscodeSnapshot = (window, id) }
+            if let outcome, !outcome.hasPrefix("error") {
+                self.vscodeSnapshot = (window, id)
+                let folder = outcome.split(separator: "\t", maxSplits: 1).dropFirst().first.map(String.init)
+                self.vscodeFolder = folder.flatMap { $0.hasPrefix("/") ? $0 : nil }
+            }
             self.log("snapshot pid=\(getpid()) window=\(window.prefix(8)) outcome=\"\(outcome ?? "none")\"")
             DispatchQueue.main.async {
                 Self.restoreProbedClipboard(clipboard, change: clipboardChange, text: clipboardText)

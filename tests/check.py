@@ -19,7 +19,8 @@
   from its window scores, one per Config.speakerWindows window ("-": quiet, not scored), as "from-to" seconds.
 - results.tsv (name, apple, whisper, send, silenced, seconds, expected): the JSON a done recording hands to other
   programs (TranscriptResult) with its holds, then "|" and the doubt that holds Return ("send": none), made from the
-  engines' texts as the app makes them; whisper "-" when it failed. The doubt is a hold whether or not it was a send.
+  engines' texts as the app makes them; whisper "-" when it failed, "~" when it is not installed. The doubt is a hold
+  whether or not it was a send.
 - voiced.tsv (name, frames, expected): whether a 1.5 s window is scored (Config.isVoiced), one character per 100 ms
   frame: "1" -20 dB, "q" -45 dB, "r" -55 dB (either side of Config.speakerQuietDB), "0" -60 dB.
 Usage: check.py <harness-binary> [--update]"""
@@ -102,8 +103,8 @@ def voiced_failures(binary):
 
 def result_failures(binary):
     cases = read("results.tsv")
-    got = run(binary, ("\t".join(["result", c["name"], c["apple"], c["whisper"], c["send"], c["silenced"], c["seconds"]])
-                       for c in cases))
+    fields = ["name", "apple", "whisper", "send", "silenced", "seconds"]
+    got = run(binary, ("\t".join(["result"] + [c[f] for f in fields]) for c in cases))
     return [(c, got[c["name"]]) for c in cases if got[c["name"]] != c["expected"]]
 
 

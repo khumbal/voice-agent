@@ -50,10 +50,16 @@ struct Config {
     private static let correctionLines = parsedCorrections(vocabularyLines)
     // Longest first, so "คีย์ Word ร์" is replaced before "คีย์ Word". English spellings match whole words in any case
     // (the term itself too: "EXAMPLE" -> "example"); a space in a spelling also matches no space.
-    private static func compiled(_ lines: [(term: String, heard: [String])])
+    // under: lines whose spellings `lines` does not define again (a project's own reading of a spelling wins).
+    private static func compiled(_ lines: [(term: String, heard: [String])],
+                                 under: [(term: String, heard: [String])] = [])
         -> [(heard: NSRegularExpression, term: String)] {
-        lines
-            .flatMap { line in ([line.term] + line.heard).map { (heard: $0, term: line.term) } }
+        let pairs = { (lines: [(term: String, heard: [String])]) in
+            lines.flatMap { line in ([line.term] + line.heard).map { (heard: $0, term: line.term) } }
+        }
+        let key = { (heard: String) in heard.lowercased().replacingOccurrences(of: " ", with: "") } // " " matches none
+        let own = pairs(lines), taken = Set(own.map { key($0.heard) })
+        return (own + pairs(under).filter { !taken.contains(key($0.heard)) })
             .sorted { $0.heard.count > $1.heard.count }
             .compactMap { pair in
                 let pattern = NSRegularExpression.escapedPattern(for: pair.heard)
@@ -80,7 +86,7 @@ struct Config {
         let directory = (vocabularyPath as NSString).deletingLastPathComponent
         let own = parsedCorrections(lines(of: [directory + "/work/" + projectName(folder) + ".txt"],
                                           after: vocabularyLines))
-        return own.isEmpty ? corrections : compiled(correctionLines + own)
+        return own.isEmpty ? corrections : compiled(own, under: correctionLines)
     }
 
     // An English term inside Thai is written with a space on each side, as Whisper writes it.

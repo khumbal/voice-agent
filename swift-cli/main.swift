@@ -51,14 +51,15 @@ if modeArg == "listen", resultID?.range(of: "^[A-Za-z0-9-]{1,64}$", options: .re
     print("usage: voice-agent listen <id: letters, digits or -, at most 64>")
     exit(1)
 }
-// One `listen` on this Mac at a time, whichever program asks: two would fight over the microphone. flock, not a
-// file's existence: the lock goes with this process however it ends, so none is ever left behind.
+// One `listen` on this Mac at a time, whichever program asks: two would both take the microphone and the HUD (a
+// hotkey recording is not counted: a press during a listen finishes it instead). flock, not a file's existence: the
+// lock goes with this process however it ends, so none is ever left behind.
 if let resultID {
     try? FileManager.default.createDirectory(atPath: Config.resultsDir, withIntermediateDirectories: true,
                                              attributes: [.posixPermissions: 0o700])
     let lock = open(Config.resultsDir + "/listen.lock", O_RDWR | O_CREAT, 0o600) // held open until exit
     guard lock >= 0, flock(lock, LOCK_EX | LOCK_NB) == 0 else {
-        TranscriptResult(outcome: .failed, error: "busy: another listen is recording").save(as: resultID)
+        TranscriptResult(id: resultID, outcome: .failed, error: "busy: another listen is recording").save(as: resultID)
         exit(0)
     }
 }

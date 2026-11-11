@@ -234,11 +234,14 @@ enum Transcript {
     }
 
     // The text delivered, from Apple's and Whisper's (repeats collapsed; nil: none), and how the merge took Whisper's.
-    // Both sides are corrected first, so a fixed term lines up as one word in the merge.
-    static func finalText(apple: String, whisper: String?) -> (text: String, trusted: Bool, appleOnly: Bool) {
-        guard let whisper else { return (Config.corrected(apple), true, false) }
-        let merged = mergeTranscripts(apple: Config.corrected(apple), whisper: Config.corrected(whisper))
-        return (Config.corrected(merged.text), merged.trusted, merged.appleOnly)
+    // Both sides are corrected first, so a fixed term lines up as one word in the merge. folder: where the text goes
+    // (Config.corrections(forFolder:)), nil when unknown.
+    static func finalText(apple: String, whisper: String?, folder: String? = nil)
+        -> (text: String, trusted: Bool, appleOnly: Bool) {
+        guard let whisper else { return (Config.corrected(apple, folder: folder), true, false) }
+        let merged = mergeTranscripts(apple: Config.corrected(apple, folder: folder),
+                                      whisper: Config.corrected(whisper, folder: folder))
+        return (Config.corrected(merged.text, folder: folder), merged.trusted, merged.appleOnly)
     }
 
     // Whisper's span with an English term, but with Apple's Thai word at either edge when Whisper's is only a
@@ -304,13 +307,13 @@ enum Transcript {
     // none of them.
     // silenced: the speaker gate silenced another voice for Whisper in this recording.
     static func doubt(apple: String, whisper: String?, final: (text: String, trusted: Bool, appleOnly: Bool),
-                       silenced: Bool = false) -> String? {
+                       silenced: Bool = false, folder: String? = nil) -> String? {
         guard let whisper else { return "Whisper ถอดไม่ได้" }
         guard !whisper.isEmpty else { return "Whisper ไม่ได้ยินอะไร" }
         guard final.trusted else { return "Apple กับ Whisper ได้ยินไม่ตรงกัน" }
         // Whisper's English span took the place of Apple's "not" ("Build ได้" for "บิวด์ไม่ได้"): the meaning turned
         // around. None in the logged dictations, but the costliest error to send.
-        if negations(final.text) < negations(Config.corrected(apple)) { return "คำว่า \"ไม่\" หายไป" }
+        if negations(final.text) < negations(Config.corrected(apple, folder: folder)) { return "คำว่า \"ไม่\" หายไป" }
         // Words only Apple heard, in a recording where another voice was silenced for Whisper: Apple's text is not
         // gated, so they may be that voice's. Held, not dropped: they may as well be the user's own (the user ruled,
         // 2026-11-11).
@@ -321,10 +324,13 @@ enum Transcript {
     // worked out on every dictation: a typed one's holds still tell a program not to act on it unasked.
     // whisper: what Whisper heard, nil when it failed; installed: false without Whisper, whose text is then Apple's.
     static func result(final: (text: String, trusted: Bool, appleOnly: Bool), apple: String, whisper: String?,
-                       installed: Bool, send: Bool, silenced: Bool) -> (result: TranscriptResult, doubt: String?) {
-        let held = installed ? doubt(apple: apple, whisper: whisper, final: final, silenced: silenced) : nil
-        let result = TranscriptResult(text: final.text, apple: apple, whisper: whisper?.isEmpty == false ? whisper : nil,
-                                      send: send, holds: holds(final.text, doubt: held))
+                       installed: Bool, send: Bool, silenced: Bool, folder: String? = nil)
+        -> (result: TranscriptResult, doubt: String?) {
+        let held = installed ? doubt(apple: apple, whisper: whisper, final: final, silenced: silenced, folder: folder)
+            : nil
+        let heard = whisper?.isEmpty == false ? whisper : nil
+        let result = TranscriptResult(text: final.text, apple: apple, whisper: heard, send: send,
+                                      holds: holds(final.text, doubt: held))
         return (result, send ? held : nil)
     }
 

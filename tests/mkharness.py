@@ -2,6 +2,7 @@
 """Combine the app's Config.swift and Transcript.swift into a stdin harness, so tests run the shipped code, not a
 copy. It reads the vocabulary file given here instead of the user's ~/.config copy.
 Input lines: merge<TAB>name<TAB>apple<TAB>whisper (as finishAndDispatch combines them), correct<TAB>name<TAB>text
+[<TAB>folder the text goes to, "-" unknown], project<TAB>name<TAB>folder (Config.projectName)
 start<TAB>name<TAB>current<TAB>segment (startChange; "none" for nil), runstart<TAB>name<TAB>frames<TAB>chunk starts
 or endchunks<TAB>name<TAB>run start<TAB>chunk starts<TAB>texts (lists comma-separated, a text "-" for nil; prints
 start|texts), doubt<TAB>name<TAB>apple<TAB>whisper<TAB>silenced ("-": it failed; the final text is made as merge
@@ -10,8 +11,10 @@ makes it; silenced "yes" when the speaker gate silenced another voice; prints "s
 or "none"), gate<TAB>name<TAB>seconds<TAB>window scores (Config.speakerWindows of a run that long; a score "-" for a
 quiet window; prints the silenced ranges in seconds or "none"),
 result<TAB>name<TAB>apple<TAB>whisper<TAB>send<TAB>silenced<TAB>seconds (Transcript.result made as the app makes
-it, whisper "-" when it failed; prints the JSON, "|" and the doubt that holds Return, "send" for none), voiced<TAB>name<TAB>frames (one 100 ms frame each, "1" at -20 dB, "q" -45 dB,
-"r" -55 dB, "0" -60 dB; prints Config.isVoiced).
+it, whisper "-" when it failed, "~" when it is not installed; prints the JSON, "|" and the doubt that holds Return,
+"send" for none),
+voiced<TAB>name<TAB>frames (one 100 ms frame each, "1" at -20 dB, "q" -45 dB, "r" -55 dB, "0" -60 dB; prints
+Config.isVoiced).
 Output lines: name<TAB>result. Usage: mkharness.py <swift-cli dir> <vocabulary.txt> <out.swift>"""
 import json, os, sys
 
@@ -37,6 +40,10 @@ while let line = readLine() {
         print("\(p[1])\t\(m.finalText(apple: p[2], whisper: m.collapseRepeats(p[3])).text)")
     case ("correct", 3):
         print("\(p[1])\t\(Config.corrected(p[2]))")
+    case ("correct", 4): // corrected for text going to the folder p[3] ("-": unknown)
+        print("\(p[1])\t\(m.finalText(apple: p[2], whisper: nil, folder: p[3] == "-" ? nil : p[3]).text)")
+    case ("project", 3):
+        print("\(p[1])\t\(Config.projectName(p[2]))")
     case ("start", 4):
         print("\(p[1])\t\(m.startChange(from: p[2], to: p[3]) ?? "none")")
     case ("runstart", 4):
@@ -57,9 +64,10 @@ while let line = readLine() {
             .map { String(format: "%.1f-%.1f", Double($0.lowerBound) / 16000, Double($0.upperBound) / 16000) }
         print("\(p[1])\t\(ranges.isEmpty ? "none" : ranges.joined(separator: ","))")
     case ("result", 7):
-        let whisper = p[3] == "-" ? nil : m.collapseRepeats(p[3])
+        let installed = p[3] != "~"
+        let whisper = p[3] == "-" || !installed ? nil : m.collapseRepeats(p[3])
         let final = m.finalText(apple: p[2], whisper: whisper?.isEmpty == false ? whisper : nil)
-        var made = m.result(final: final, apple: p[2], whisper: whisper, installed: true, send: p[4] == "yes",
+        var made = m.result(final: final, apple: p[2], whisper: whisper, installed: installed, send: p[4] == "yes",
                             silenced: p[5] == "yes")
         made.result.id = "id-1"
         made.result.outcome = .done
