@@ -5,7 +5,7 @@ Press a hotkey, speak a mix of Thai and English the way developers actually do �
 *"ช่วย run test แล้ว commit ให้หน่อย"* — and the text lands in the VS Code terminal you were in,
 or at the cursor of any other app.
 
-![The HUD while listening](docs/images/hud-listening.png)
+![The HUD listening, transcribing, then sending the command](docs/images/hud-demo.gif)
 
 ## Why
 
