@@ -4,3 +4,12 @@ comment revise	พิจารณาเรื่อง	เรื่องขอ�
 same start	ช่วยตรวจสอบ	ช่วยตรวจสอบให้หน่อย	none
 boundary half: revise	กขคงจฉชซ	คงจฉ	revise
 boundary under half: restart	กขคงจฉชซฌ	คงจฉ	restart
+same ending thai: revise	การการให้	จัดการให้	revise
+same ending mixed: revise	Velge เกตเวย์	เวลเกตเวย์	revise
+same ending english word: revise	ไม่ใช่ session	ใน session	revise
+same ending english case: revise	UX Account เคานต์	ยู Account เคานต์	revise
+short shared ending: restart	จัดการให้เลย	ทำต่อเลย	restart
+boundary shared ending 2: restart	กขคจฉ	ซฌจฉ	restart
+boundary shared ending under half: restart	กขคงจฉชซ	ฌญฎฏฉชซ	restart
+boundary 2/3 the old length, half shared: revise	กขคงจฉชซฌ	ญฎฏชซฌ	revise
+same ending in another case: revise	กขคงABC	ฌญabc	revise

@@ -21,6 +21,7 @@ expert agent = เอกเปิดเอเจนต์, เอ็กซ์เ
 process = โปรเซส, โพรเซส
 socket = ซอกเก็ต, Cock
 production ready = production lady, โปรดักชั่นเลดี้, โปรดักชันเลดี้
+จัดการให้ = การการให้ จัดการให้, การการให้ การให้
 เปิด MR ให้ Tech Lead
 แก้ defect หน้า screen บน tablet
 ส่ง null

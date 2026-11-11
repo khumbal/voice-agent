@@ -1538,10 +1538,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // as long and may reuse what it had ("พิจารณาเรื่อง" -> "เรื่องของ"; keeping that would repeat the words). A start
     // under half as long is new speech even when its first letters occur in the old text: read as a revision it
     // dropped whole sentences ("…ต้องเขียนให้ชัดเจน…" -> "เขียน"); a revision read as a restart only repeats words.
+    // A revision may rewrite only its first words, in either script ("การการให้" -> "จัดการให้", "Velge เกตเวย์" ->
+    // "เวลเกตเวย์"): an ending of 3+ characters (any case; a mark counts with its letter) shared over at least half the
+    // new text, at 2/3 the old length or more, is the same audio ("จัดการให้เลย" -> "ทำต่อเลย" shares "เลย" but is new
+    // speech). New speech ending in the old words ("ช่วยดูให้หน่อยนะครับ" -> "แก้ให้หน่อยนะครับ") is lost the same way;
+    // none of 1469 logged restarts was one, while 43 were revisions that repeated their misheard start.
     private func startChange(from current: String, to segment: String) -> String? {
         guard current.count >= 4, !segment.hasPrefix(String(current.prefix(2))) else { return nil }
-        let restarted = segment.count < current.count
-            && (!current.contains(String(segment.prefix(4))) || segment.count * 2 < current.count)
+        let sharedEnding = zip(current.reversed(), segment.reversed())
+            .prefix { $0.lowercased() == $1.lowercased() }.count
+        let sameEnding = sharedEnding >= 3 && sharedEnding * 2 >= segment.count
+            && segment.count * 3 >= current.count * 2
+        let restarted = segment.count < current.count && (segment.count * 2 < current.count
+            || (!current.contains(String(segment.prefix(4))) && !sameEnding))
         return restarted ? "restart" : "revise"
     }
 
