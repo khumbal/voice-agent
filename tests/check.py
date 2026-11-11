@@ -9,11 +9,16 @@
   transcription of the recording, blank when none) is printed so the review can see whether the change helped.
 - chunks.tsv (name, check, at, chunk_starts, texts, expected): where a Whisper run starts in a chunked recording
   (runStart, at = frames heard) and which closed chunks' texts the end uses (endChunks, at = the run's start).
-- doubts.tsv (name, apple, whisper, expected): why a held-to-send dictation is typed without Return ("send": it is
-  sent), its final text made as the app makes it; whisper "-" when it failed.
+- doubts.tsv (name, apple, whisper, silenced, expected): why a held-to-send dictation is typed without Return ("send":
+  it is sent), its final text made as the app makes it; whisper "-" when it failed; silenced "yes" when the speaker
+  gate silenced another voice in the recording.
 - mics.tsv (name, devices, preferred, expected): which input a recording uses (Microphone.chosen), devices as
   "name/transport fourcc (0: unreadable)[/default];…" in CoreAudio's order, preferred as microphones.txt lists
   them ("name;…").
+- gates.tsv (name, seconds, scores, expected): which parts of a run the speaker gate silences (Config.silencedRanges)
+  from its window scores, one per Config.speakerWindows window ("-": quiet, not scored), as "from-to" seconds.
+- voiced.tsv (name, frames, expected): whether a 1.5 s window is scored (Config.isVoiced), one character per 100 ms
+  frame: "1" -20 dB, "q" -45 dB, "r" -55 dB (either side of Config.speakerQuietDB), "0" -60 dB.
 Usage: check.py <harness-binary> [--update]"""
 import os, subprocess, sys
 
@@ -70,13 +75,25 @@ def chunk_failures(binary):
 
 def doubt_failures(binary):
     cases = read("doubts.tsv")
-    got = run(binary, (f"doubt\t{c['name']}\t{c['apple']}\t{c['whisper']}" for c in cases))
+    got = run(binary, (f"doubt\t{c['name']}\t{c['apple']}\t{c['whisper']}\t{c['silenced']}" for c in cases))
     return [(c, got[c["name"]]) for c in cases if got[c["name"]] != c["expected"]]
 
 
 def mic_failures(binary):
     cases = read("mics.tsv")
     got = run(binary, (f"mic\t{c['name']}\t{c['devices']}\t{c['preferred']}" for c in cases))
+    return [(c, got[c["name"]]) for c in cases if got[c["name"]] != c["expected"]]
+
+
+def gate_failures(binary):
+    cases = read("gates.tsv")
+    got = run(binary, (f"gate\t{c['name']}\t{c['seconds']}\t{c['scores']}" for c in cases))
+    return [(c, got[c["name"]]) for c in cases if got[c["name"]] != c["expected"]]
+
+
+def voiced_failures(binary):
+    cases = read("voiced.tsv")
+    got = run(binary, (f"voiced\t{c['name']}\t{c['frames']}" for c in cases))
     return [(c, got[c["name"]]) for c in cases if got[c["name"]] != c["expected"]]
 
 
@@ -103,6 +120,14 @@ def main():
     for c, got in mics:
         print(f"FAIL mic {c['name']}\n  got  {got}\n  want {c['expected']}")
 
+    gates = gate_failures(binary)
+    for c, got in gates:
+        print(f"FAIL gate {c['name']}\n  got  {got}\n  want {c['expected']}")
+
+    voiced = voiced_failures(binary)
+    for c, got in voiced:
+        print(f"FAIL voiced {c['name']}\n  got  {got}\n  want {c['expected']}")
+
     golden = read("merge_golden.tsv")
     got = merged(binary, {g["name"]: (g["apple"], g["whisper"]) for g in golden})
     changed = [g for g in golden if got[g["name"]] != g["expected"]]
@@ -116,7 +141,7 @@ def main():
           f" whisper {reference_cer(golden, {g['name']: g['whisper'] for g in golden}):.4f}"
           f" merged {reference_cer(golden, got):.4f}")
 
-    failed = len(failures) + len(starts) + len(chunks) + len(doubts) + len(mics)
+    failed = len(failures) + len(starts) + len(chunks) + len(doubts) + len(mics) + len(gates) + len(voiced)
     if update and changed:
         for g in golden:
             g["expected"] = got[g["name"]]
@@ -127,6 +152,7 @@ def main():
     verdict = "ok" if not failed else f"{failed} failed"
     print(f"corrections {len(read('corrections.tsv'))}, starts {len(read('starts.tsv'))}, "
           f"chunks {len(read('chunks.tsv'))}, doubts {len(read('doubts.tsv'))}, mics {len(read('mics.tsv'))}, "
+          f"gates {len(read('gates.tsv'))}, voiced {len(read('voiced.tsv'))}, "
           f"merge {len(golden)}: {verdict}")
     sys.exit(1 if failed else 0)
 

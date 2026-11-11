@@ -166,6 +166,64 @@ struct Config {
     static let finalMinSeconds: TimeInterval = 2
     // One whisper-cli at a time: two large-v3 runs at once each take twice as long and ~1 GB of memory.
     static let whisperLockPath = NSHomeDirectory() + "/.local/share/voice-agent/whisper.lock"
+    // Speaker gate (see SpeakerGate): before Whisper hears a run, the parts only other voices fill are silenced, so a
+    // bystander in the user's pauses does not reach Whisper's text. Each 1.5 s window, every 0.5 s, is compared with
+    // the user's voiceprint (cosine). On real recordings the user's windows scored 0.4-0.7 and a bystander's 0.05-0.26
+    // with CAM++ zh+en. A window with under speakerVoicedSeconds of 100 ms frames louder than speakerQuietDB is not
+    // scored: silence has nothing to keep out, and a short word alone in a window scores low (0.11) as if not theirs.
+    static let speakerDir = NSHomeDirectory() + "/.local/share/voice-agent/speaker"
+    static let speakerThreshold: Float = 0.3
+    static let speakerWindow = 24000
+    static let speakerHop = 8000
+    static let speakerQuietDB: Float = -50
+    static let speakerVoicedSeconds = 0.5
+
+    // Where a run of `count` samples is scored: a window every speakerHop, the last ending at the run's end.
+    static func speakerWindows(count: Int) -> [Int] {
+        guard count >= speakerWindow else { return [] }
+        let starts = Array(stride(from: 0, through: count - speakerWindow, by: speakerHop))
+        return starts.last == count - speakerWindow ? starts : starts + [count - speakerWindow]
+    }
+
+    // Whether a window holds speakerVoicedSeconds of 100 ms frames louder than speakerQuietDB (see speakerDir).
+    static func isVoiced(_ window: ArraySlice<Float>) -> Bool {
+        let frames = stride(from: window.startIndex, to: window.endIndex, by: 1600).filter { start in
+            let frame = window[start..<min(start + 1600, window.endIndex)]
+            let power = frame.reduce(0) { $0 + $1 * $1 } / Float(frame.count)
+            return 10 * log10(power + 1e-18) >= speakerQuietDB
+        }
+        return Double(frames.count) / 10 >= speakerVoicedSeconds
+    }
+
+    // The parts of a run to silence: each speakerHop block whose scored windows (a quiet one is nil) are all under
+    // the threshold, and so are its neighbours'. A window half silence, half the user's first word scores low
+    // (0.11), so the block next to a kept one stays: the edges of their words are kept, and so is a bystander next to
+    // them: a window counted as theirs keeps every block it covers, and the neighbour rule one more (about 1 s past a
+    // window with 1 s of their voice; more when a window mostly of the bystander still scores 0.3).
+    // A run with no window of the user's is silenced whole: a 6 s chunk can be all bystander (the user ruled,
+    // 2026-11-11). Their own voice going unrecognised is kept off by gating only the microphone they enrolled with,
+    // and words Whisper then misses stay in the text from Apple's (finalText keeps what only Apple heard, but for a
+    // one-word stammer). Apple's text is not gated: a bystander Apple also heard is kept the same way, so a dictation
+    // held to send is then typed without Return (see doubt).
+    static func silencedRanges(count: Int, starts: [Int], scores: [Float?]) -> [Range<Int>] {
+        let blocks = Array(stride(from: 0, to: count, by: speakerHop))
+        let others = blocks.map { block -> Bool in
+            let end = min(block + speakerHop, count)
+            let over = zip(starts, scores).filter { $0.0 < end && $0.0 + speakerWindow > block }.compactMap(\.1)
+            return !over.isEmpty && over.allSatisfy { $0 < speakerThreshold }
+        }
+        var ranges: [Range<Int>] = []
+        for (i, block) in blocks.enumerated() where others[max(i - 1, 0)...min(i + 1, blocks.count - 1)]
+            .allSatisfy({ $0 }) {
+            let end = min(block + speakerHop, count)
+            if let last = ranges.last, last.upperBound == block {
+                ranges[ranges.count - 1] = last.lowerBound..<end
+            } else {
+                ranges.append(block..<end)
+            }
+        }
+        return ranges
+    }
     // Shared with the VS Code extension: a vscode:// link from anywhere else cannot type into the terminal.
     static let uriTokenPath = NSHomeDirectory() + "/.local/share/voice-agent/uri-token"
     // The extension writes ack/<id> once it has placed the text; without it the text is kept on the clipboard.
@@ -619,6 +677,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var currentSegment = "" // the recognizer's text since its last restart
     private var recognitionGeneration = 0
     private var startChanges: [String] = [] // logged: how each change of the recognizer's start was read
+    private var gateProblemLogged = false // once per recording: why there is no speaker gate
+    private var gateSilenced = false // on whisperQueue: a run of this recording had another voice silenced
     private var whisperFile: AVAudioFile? // 16 kHz mono copy of the session for Whisper
     private static let whisperWAV: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16000,
                                                     AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
@@ -726,6 +786,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         didFinishLaunching = true
+        // The speaker model loads now, while a standby waits for the press, not in the first run's turn.
+        DispatchQueue.global(qos: .utility).async { _ = SpeakerGate.shared }
         // Not a standby, or one woken before it finished launching (its signal handlers were already up).
         guard let listener = standbyFor, isStandby else {
             begin()
@@ -1225,7 +1287,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.processLock.unlock()
             guard closes || current else { return } // spoken over while waiting its turn
             let seconds = Double(samples.count) / 16000
-            let text = Self.writeWAV(samples, to: self.pauseWAV)
+            let text = Self.writeWAV(self.gated(samples, from: start) ?? samples, to: self.pauseWAV)
                 ? self.transcribeWithWhisper(self.pauseWAV, seconds: seconds, generation: closes ? nil : generation,
                                              chunk: closes ? start : nil)
                 : nil
@@ -1240,17 +1302,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // On whisperQueue: the end's run, on heard[start...]. From the start that is the recording's own file.
+    // On whisperQueue: the run with the parts only other voices fill silenced (nil: nothing to silence, or no gate),
+    // and a log line of its window scores for tuning Config.speakerThreshold.
+    private func gated(_ samples: [Float], from start: Int) -> [Float]? {
+        // microphone is set as the recording starts, before any run is queued.
+        guard let gate = SpeakerGate.shared, gate.hears(inputDeviceName) else {
+            let why = SpeakerGate.shared.map { "enrolled on \"\($0.microphone)\", not \"\(inputDeviceName)\"" }
+            if !gateProblemLogged { log("gate off pid=\(getpid()) \(why ?? SpeakerGate.problem)") }
+            gateProblemLogged = true
+            return nil
+        }
+        let started = Date()
+        let result = gate.gate(samples)
+        let seconds = { (frames: Int) in String(format: "%.1f", Double(frames) / 16000) }
+        let silenced = result.silenced.map { seconds($0.lowerBound) + "-" + seconds($0.upperBound) }
+        log("gate pid=\(getpid()) at=\(seconds(start)) seconds=\(seconds(samples.count)) "
+            + "ms=\(Int(Date().timeIntervalSince(started) * 1000)) "
+            + "scores=\"\(Self.scoreList(result.scores))\" silenced=\"\(silenced.joined(separator: " "))\"")
+        if !silenced.isEmpty { gateSilenced = true }
+        return result.kept
+    }
+
+    static func scoreList(_ scores: [Float?]) -> String {
+        scores.map { $0.map { String(format: "%.2f", $0) } ?? "-" }.joined(separator: " ")
+    }
+
+    // On whisperQueue: the end's run, on heard[start...]. From the start, with nothing silenced, that is the
+    // recording's own file (kept as recorded).
     private func transcribeEnd(_ heard: [Float], from start: Int) -> String? {
-        guard start > 0 else { return transcribeWithWhisper(whisperURL, seconds: recordedSeconds) }
+        let kept = gated(Array(heard[start...]), from: start)
+        guard start > 0 || kept != nil else { return transcribeWithWhisper(whisperURL, seconds: recordedSeconds) }
         defer { try? FileManager.default.removeItem(at: pauseWAV) }
-        let samples = Array(heard[start...])
+        let samples = kept ?? Array(heard[start...])
         return Self.writeWAV(samples, to: pauseWAV)
             ? transcribeWithWhisper(pauseWAV, seconds: Double(samples.count) / 16000) : nil
     }
 
     // A 16 kHz WAV for whisper-cli, closed (its header written) on return.
-    private static func writeWAV(_ samples: [Float], to url: URL) -> Bool {
+    static func writeWAV(_ samples: [Float], to url: URL) -> Bool {
         guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1,
                                          interleaved: false),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
@@ -1612,8 +1701,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Apple's Thai with Whisper's English: align the two texts (LCS over mergeUnits, case-insensitive); where they
     // differ, take Whisper's span when it holds Latin letters (an English term Apple transliterated) or a negation
     // Apple's lacks, else Apple's.
-    // trusted: Whisper's text was used, not Apple's alone because Whisper heard something else.
-    private func mergeTranscripts(apple: String, whisper: String) -> (text: String, trusted: Bool) {
+    // trusted: Whisper's text was used, not Apple's alone because Whisper heard something else. appleOnly: the text
+    // keeps words where Whisper heard none.
+    private func mergeTranscripts(apple: String, whisper: String) -> (text: String, trusted: Bool, appleOnly: Bool) {
         let a = mergeUnits(repetitionMarked(apple, as: whisper)), w = mergeUnits(whisper)
         let key = { (unit: String) in unit.lowercased() }
         var lcs = Array(repeating: Array(repeating: 0, count: w.count + 1), count: a.count + 1)
@@ -1631,7 +1721,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Matched inside words ("เป้าหมาย"). A "ไม่" Apple heard as "มี" ("มีต้องแก้") keeps Apple's: replayed on 888
         // logged dictations, this changed 3, each a "not" Whisper made up ("และมีประสิทธิภาพ").
         let soundsLikeNot = ["ใหม่", "ไหม", "มั้ย", "มั๊ย", "ไม้", "ไหม้", "หมาย", "มี"]
-        var merged = "", appleSpan = "", whisperSpan = "", lastWord = "", addedAtEnd = ""
+        var merged = "", appleSpan = "", whisperSpan = "", lastWord = "", addedAtEnd = "", appleOnly = false
         func flush(atEnd: Bool = false, next: String = "") {
             let appleWord = appleSpan.trimmingCharacters(in: .whitespaces)
             let whisperWord = whisperSpan.trimmingCharacters(in: .whitespaces)
@@ -1664,6 +1754,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 merged += whisperSpan
             } else {
                 merged += appleSpan
+                // Whisper's span may hold the full stop it puts at a silenced stretch.
+                let word = { (c: Character) in c.isLetter || c.isNumber }
+                if !whisperSpan.contains(where: word), appleWord.contains(where: word) { appleOnly = true }
             }
             appleSpan = ""; whisperSpan = ""
         }
@@ -1689,7 +1782,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let result = merged.split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
         // Apple missed part of the speech and the merge filled it from Whisper: keep that even though little of
         // Whisper's Thai matched Apple's (the check below), as long as Whisper also holds most of what Apple heard.
-        if apple.count * 10 < result.count * 7, sharedThai * 10 >= appleThai * 6 { return (result, true) }
+        if apple.count * 10 < result.count * 7, sharedThai * 10 >= appleThai * 6 { return (result, true, appleOnly) }
         // Whisper heard something else (it hallucinates on short or unclear speech: "ทำต่อ" became "ที่นี่ รับทราบ"):
         // keep Apple's text. An English-only result has no Thai to agree on: trust it only when the prompt teaches
         // every word in it.
@@ -1698,17 +1791,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             !($0.first?.isLetter ?? false) || thaiCount($0) > 0 || vocabulary.contains(key($0))
         }
         if whisperThai == 0 ? appleThai > 0 && !knownEnglish : sharedThai * 2 < whisperThai {
-            return (apple, false)
+            return (apple, false, false)
         }
-        return (result, true)
+        return (result, true, appleOnly)
     }
 
     // The text delivered, from Apple's and Whisper's (repeats collapsed; nil: none), and how the merge took Whisper's.
     // Both sides are corrected first, so a fixed term lines up as one word in the merge.
-    private func finalText(apple: String, whisper: String?) -> (text: String, trusted: Bool) {
-        guard let whisper else { return (Config.corrected(apple), true) }
+    private func finalText(apple: String, whisper: String?) -> (text: String, trusted: Bool, appleOnly: Bool) {
+        guard let whisper else { return (Config.corrected(apple), true, false) }
         let merged = mergeTranscripts(apple: Config.corrected(apple), whisper: Config.corrected(whisper))
-        return (Config.corrected(merged.text), merged.trusted)
+        return (Config.corrected(merged.text), merged.trusted, merged.appleOnly)
     }
 
     // Whisper's span with an English term, but with Apple's Thai word at either edge when Whisper's is only a
@@ -1772,13 +1865,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // letter or odd casing was mostly right ("เลือก A", "Column D"), and Whisper's English missing from the text
     // happened only where the merge kept Apple's. Both engines mishearing alike ("บันสตาร์" for "Bun start") shows in
     // none of them.
-    private func doubt(apple: String, whisper: String?, final: (text: String, trusted: Bool)) -> String? {
+    // silenced: the speaker gate silenced another voice for Whisper in this recording.
+    private func doubt(apple: String, whisper: String?, final: (text: String, trusted: Bool, appleOnly: Bool),
+                       silenced: Bool = false) -> String? {
         guard let whisper else { return "Whisper ถอดไม่ได้" }
         guard !whisper.isEmpty else { return "Whisper ไม่ได้ยินอะไร" }
         guard final.trusted else { return "Apple กับ Whisper ได้ยินไม่ตรงกัน" }
         // Whisper's English span took the place of Apple's "not" ("Build ได้" for "บิวด์ไม่ได้"): the meaning turned
         // around. None in the logged dictations, but the costliest error to send.
-        return negations(final.text) < negations(Config.corrected(apple)) ? "คำว่า \"ไม่\" หายไป" : nil
+        if negations(final.text) < negations(Config.corrected(apple)) { return "คำว่า \"ไม่\" หายไป" }
+        // Words only Apple heard, in a recording where another voice was silenced for Whisper: Apple's text is not
+        // gated, so they may be that voice's. Held, not dropped: they may as well be the user's own (the user ruled,
+        // 2026-11-11).
+        return silenced && final.appleOnly ? "มีเสียงคนอื่นแทรก คำที่ Apple ได้ยินฝ่ายเดียวอาจเป็นของเขา" : nil
     }
 
     private func pruneRecordings() {
@@ -1871,7 +1970,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let finalText = final.text
             // Without Whisper installed Apple's text is all there is: sent as before.
             let doubt = send && whisperInstalled
-                ? self.doubt(apple: appleText, whisper: tail == nil ? nil : whisperText ?? "", final: final) : nil
+                ? self.doubt(apple: appleText, whisper: tail == nil ? nil : whisperText ?? "", final: final,
+                             silenced: self.gateSilenced) : nil
             self.pruneRecordings()
             self.log("file=\(self.whisperURL.lastPathComponent) send=\(send) engine=\(whisperText == nil ? "apple" : "merged") "
                 + "whisper_ms=\(Int(Date().timeIntervalSince(started) * 1000)) apple=\"\(appleText)\" "
@@ -2185,6 +2285,149 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// The user's voice against everyone else's (see Config.speakerThreshold): sherpa-onnx's C library running the CAM++
+// zh+en speaker embedding, loaded with dlopen so the app still builds with plain swiftc. install.sh puts the library
+// and model in Config.speakerDir; `voice-agent enroll` writes the voiceprint. Without any of them there is no gate
+// and Whisper hears everything, as before.
+final class SpeakerGate {
+    static let shared = SpeakerGate(enrolled: true)
+    static var problem = "" // why shared is nil, for the log
+
+    private typealias Create = @convention(c) (UnsafeRawPointer) -> OpaquePointer?
+    private typealias Dim = @convention(c) (OpaquePointer) -> Int32
+    private typealias CreateStream = @convention(c) (OpaquePointer) -> OpaquePointer?
+    private typealias Accept = @convention(c) (OpaquePointer, Int32, UnsafePointer<Float>, Int32) -> Void
+    private typealias Finish = @convention(c) (OpaquePointer) -> Void
+    private typealias IsReady = @convention(c) (OpaquePointer, OpaquePointer) -> Int32
+    private typealias Compute = @convention(c) (OpaquePointer, OpaquePointer) -> UnsafePointer<Float>?
+    private typealias FreeEmbedding = @convention(c) (UnsafePointer<Float>) -> Void
+    private let createStream: CreateStream, accept: Accept, finish: Finish, isReady: IsReady
+    private let compute: Compute, freeEmbedding: FreeEmbedding, destroyStream: Finish
+    private let extractor: OpaquePointer
+    private let dim: Int
+    private let voiceprint: [Float]
+    let microphone: String // any part of the name of the input the voiceprint was recorded with, any case
+
+    static var voiceprintURL: URL { URL(fileURLWithPath: Config.speakerDir + "/voiceprint.f32") }
+    static var microphoneURL: URL { URL(fileURLWithPath: Config.speakerDir + "/voiceprint.mic") }
+
+    // enrolled: also read the voiceprint (`enroll` makes one, so it does not need it).
+    init?(enrolled: Bool) {
+        let model = Config.speakerDir + "/campplus.onnx"
+        guard FileManager.default.fileExists(atPath: model) else { Self.problem = "no \(model)"; return nil }
+        guard let lib = dlopen(Config.speakerDir + "/libsherpa-onnx-c-api.dylib", RTLD_NOW) else {
+            Self.problem = String(cString: dlerror()); return nil
+        }
+        func symbol<T>(_ name: String, _: T.Type) -> T? {
+            dlsym(lib, name).map { unsafeBitCast($0, to: T.self) }
+        }
+        guard let create = symbol("SherpaOnnxCreateSpeakerEmbeddingExtractor", Create.self),
+              let dimOf = symbol("SherpaOnnxSpeakerEmbeddingExtractorDim", Dim.self),
+              let createStream = symbol("SherpaOnnxSpeakerEmbeddingExtractorCreateStream", CreateStream.self),
+              let accept = symbol("SherpaOnnxOnlineStreamAcceptWaveform", Accept.self),
+              let finish = symbol("SherpaOnnxOnlineStreamInputFinished", Finish.self),
+              let isReady = symbol("SherpaOnnxSpeakerEmbeddingExtractorIsReady", IsReady.self),
+              let compute = symbol("SherpaOnnxSpeakerEmbeddingExtractorComputeEmbedding", Compute.self),
+              let freeEmbedding = symbol("SherpaOnnxSpeakerEmbeddingExtractorDestroyEmbedding", FreeEmbedding.self),
+              let destroyStream = symbol("SherpaOnnxDestroyOnlineStream", Finish.self)
+        else { Self.problem = "a function is missing from the library"; return nil }
+        // SherpaOnnxSpeakerEmbeddingExtractorConfig: const char *model; int32_t num_threads; int32_t debug;
+        // const char *provider (c-api.h, v2.0.1). Two threads: whisper-server holds the GPU, not the CPU.
+        let config = UnsafeMutableRawPointer.allocate(byteCount: 24, alignment: 8)
+        let modelPath = strdup(model), provider = strdup("cpu")
+        defer { config.deallocate(); free(modelPath); free(provider) }
+        config.storeBytes(of: UnsafePointer(modelPath), toByteOffset: 0, as: UnsafePointer<CChar>?.self)
+        config.storeBytes(of: 2, toByteOffset: 8, as: Int32.self)
+        config.storeBytes(of: 0, toByteOffset: 12, as: Int32.self)
+        config.storeBytes(of: UnsafePointer(provider), toByteOffset: 16, as: UnsafePointer<CChar>?.self)
+        guard let extractor = create(UnsafeRawPointer(config)) else {
+            Self.problem = "the model did not load"; return nil
+        }
+        self.extractor = extractor
+        dim = Int(dimOf(extractor))
+        (self.createStream, self.accept, self.finish, self.isReady) = (createStream, accept, finish, isReady)
+        (self.compute, self.freeEmbedding, self.destroyStream) = (compute, freeEmbedding, destroyStream)
+        guard enrolled else { voiceprint = []; microphone = ""; return }
+        let saved = (try? Data(contentsOf: Self.voiceprintURL)) ?? Data()
+        guard saved.count == dim * MemoryLayout<Float>.size else {
+            Self.problem = "no voiceprint for this model: run voice-agent enroll"; return nil
+        }
+        voiceprint = saved.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        microphone = ((try? String(contentsOf: Self.microphoneURL, encoding: .utf8)) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !microphone.isEmpty else {
+            Self.problem = "no microphone for the voiceprint: run voice-agent enroll --mic"; return nil
+        }
+    }
+
+    // Whether this input is the one the voiceprint was recorded with: on another the user's voice scores lower
+    // (a headset recording at 0.06), and the gate would silence them.
+    func hears(_ input: String) -> Bool { input.localizedCaseInsensitiveContains(microphone) }
+
+    // The unit-length embedding of these samples (16 kHz), nil when the model could not make one.
+    func embedding(_ samples: ArraySlice<Float>) -> [Float]? {
+        guard !samples.isEmpty, let stream = createStream(extractor) else { return nil }
+        defer { destroyStream(stream) }
+        samples.withUnsafeBufferPointer { accept(stream, 16000, $0.baseAddress!, Int32($0.count)) }
+        finish(stream)
+        guard isReady(extractor, stream) != 0, let values = compute(extractor, stream) else { return nil }
+        defer { freeEmbedding(values) }
+        let vector = Array(UnsafeBufferPointer(start: values, count: dim))
+        let norm = vector.reduce(0) { $0 + $1 * $1 }.squareRoot()
+        return norm > 0 ? vector.map { $0 / norm } : nil
+    }
+
+    // The run with the parts only other voices fill silenced (nil: nothing silenced), and what decided it.
+    func gate(_ samples: [Float]) -> (kept: [Float]?, scores: [Float?], silenced: [Range<Int>]) {
+        let starts = Config.speakerWindows(count: samples.count)
+        let scores = starts.map { start -> Float? in
+            let window = samples[start..<start + Config.speakerWindow]
+            guard Config.isVoiced(window), let vector = embedding(window) else { return nil }
+            return zip(vector, voiceprint).reduce(0) { $0 + $1.0 * $1.1 }
+        }
+        let silenced = Config.silencedRanges(count: samples.count, starts: starts, scores: scores)
+        guard !silenced.isEmpty else { return (nil, scores, []) }
+        var kept = samples
+        for range in silenced { kept.replaceSubrange(range, with: repeatElement(0, count: range.count)) }
+        return (kept, scores, silenced)
+    }
+
+    // `voice-agent enroll --mic <name> <wav>…`: the mean of these recordings' embeddings, written as the voiceprint,
+    // and the microphone they were recorded with (any part of its name). Recordings of the user alone.
+    static func enroll(_ paths: [String], microphone: String) -> (ok: Bool, message: String) {
+        guard let gate = SpeakerGate(enrolled: false) else { return (false, "speaker gate unavailable: \(problem)") }
+        let vectors = paths.compactMap { readWAV($0).flatMap { gate.embedding($0[...]) } }
+        guard vectors.count == paths.count else {
+            return (false, "\(paths.count - vectors.count) of \(paths.count) recordings gave no voiceprint "
+                + "(not a 16 kHz mono WAV, or too short)")
+        }
+        let sum = vectors.dropFirst().reduce(vectors[0]) { zip($0, $1).map(+) }
+        let norm = sum.reduce(0) { $0 + $1 * $1 }.squareRoot()
+        let voiceprint = sum.map { $0 / norm }
+        let data = voiceprint.withUnsafeBufferPointer { Data(buffer: $0) }
+        // The old voiceprint goes first: a write failing halfway leaves the gate off, never the new microphone's name
+        // gated against the old voiceprint (or the reverse).
+        try? FileManager.default.removeItem(at: voiceprintURL)
+        guard (try? microphone.write(to: microphoneURL, atomically: true, encoding: .utf8)) != nil,
+              (try? data.write(to: voiceprintURL, options: .atomic)) != nil else {
+            return (false, "could not write the voiceprint in \(Config.speakerDir)")
+        }
+        let scores = vectors.map { zip($0, voiceprint).reduce(0) { $0 + $1.0 * $1.1 } }
+        return (true, "voiceprint from \(vectors.count) recordings, each scoring "
+            + String(format: "%.2f-%.2f", scores.min()!, scores.max()!) + " against it, gating \"\(microphone)\"")
+    }
+
+    static func readWAV(_ path: String) -> [Float]? {
+        guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: path)),
+              file.processingFormat.sampleRate == 16000, file.processingFormat.channelCount == 1,
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                            frameCapacity: AVAudioFrameCount(file.length)),
+              (try? file.read(into: buffer)) != nil, let channel = buffer.floatChannelData?[0]
+        else { return nil }
+        return Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+    }
+}
+
 // System-wide hotkey: Carbon hotkeys fire before the focused app sees the key, so it also works in VS Code's terminal.
 // Tap: start a recording that ends on silence or the next press. Hold: push-to-talk, the release ends it.
 // The recording runs as a separate instance of this bundle so it owns its microphone/speech permissions.
@@ -2381,6 +2624,37 @@ if modeArg == "microphones" {
     for microphone in microphones {
         print("\(microphone.id == chosen?.id ? "*" : " ") \(microphone.name) [\(microphone.transportCode)"
               + "\(microphone.isDefault ? ", default" : "")\(microphone.rank == nil ? ", only when named" : "")]")
+    }
+    exit(0)
+}
+
+// "enroll --mic <name> <wav>…": the speaker gate's voiceprint, from recordings of the user alone on that microphone
+// (see SpeakerGate.enroll).
+// "gate <wav> [out.wav]": how a run of that whole recording is gated on the enrolled microphone; out.wav gets the audio
+// Whisper would hear. For checking Config.speakerThreshold on real recordings.
+if modeArg == "enroll"
+    ? args.count < 5 || args[2] != "--mic" || args[3].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    : modeArg == "gate" && args.count < 3 {
+    print("usage: voice-agent enroll --mic <name> <wav>… | voice-agent gate <wav> [out.wav]")
+    exit(1)
+}
+if modeArg == "enroll" {
+    let result = SpeakerGate.enroll(Array(args.dropFirst(4)), microphone: args[3])
+    print(result.message)
+    exit(result.ok ? 0 : 1)
+}
+if modeArg == "gate" {
+    guard let gate = SpeakerGate.shared, let samples = SpeakerGate.readWAV(args[2]) else {
+        print("cannot gate: \(SpeakerGate.problem.isEmpty ? "not a 16 kHz mono WAV" : SpeakerGate.problem)")
+        exit(1)
+    }
+    let result = gate.gate(samples)
+    print("scores: \(AppDelegate.scoreList(result.scores))")
+    print("silenced: " + result.silenced.map { String(format: "%.1f-%.1f s", Double($0.lowerBound) / 16000,
+                                                      Double($0.upperBound) / 16000) }.joined(separator: ", "))
+    if args.count > 3 {
+        let out = result.kept ?? samples
+        _ = AppDelegate.writeWAV(out, to: URL(fileURLWithPath: args[3]))
     }
     exit(0)
 }

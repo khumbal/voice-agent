@@ -1,0 +1,12 @@
+name	seconds	scores	expected
+user only	4.0	0.5,0.5,0.5,0.5,0.5,0.5	none
+no window of the user's: silenced whole	4.0	0.1,0.1,0.1,0.1,0.1,0.1	0.0-4.0
+bystander between the user's words	8.0	0.5,0.5,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.5,0.5,0.5	2.5-5.0
+bystander after the user's words	6.0	0.5,0.5,0.5,0.1,0.1,0.1,0.1,0.1,0.1,0.1	3.0-6.0
+one low block each side of a word: kept	4.0	0.5,0.1,0.1,0.1,0.1,0.5	none
+quiet windows are not scored	4.0	0.5,0.5,-,-,-,-	none
+threshold is kept	4.0	0.5,0.5,0.3,0.3,0.3,0.3	none
+shorter than a window	1.2		none
+last window ends at the run's end	4.2	0.5,0.5,0.1,0.1,0.1,0.1,0.1	2.5-4.2
+a window at the threshold is the user's	4.0	0.3,0.1,0.1,0.1,0.1,0.1	2.0-4.0
+bystander before the user's words	4.0	0.1,0.1,0.1,0.5,0.5,0.5	0.0-1.0

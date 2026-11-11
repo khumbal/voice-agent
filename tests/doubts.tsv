@@ -1,7 +1,13 @@
-name	apple	whisper	expected
-Whisper heard nothing	ทำต่อเลยนะครับ		Whisper ไม่ได้ยินอะไร
-Apple's 'not' lost under Whisper's English span	บิวด์ไม่ได้นะครับ	Build ได้นะครับ	คำว่า "ไม่" หายไป
-the 'not' only Whisper heard is kept: sent	อยากแก้ไฟล์นี้นะครับ	อย่าแก้ไฟล์นี้นะครับ	send
-the merge dropping Whisper's added ending is not a doubt	ช่วยรันเทสต์ให้หน่อย	ช่วย run test ให้หน่อย Thank you.	send
-a full stop after Whisper's text is not a doubt	เปิดวีเอสโค้ดให้หน่อย	เปิด VS Code ให้หน่อย.	send
-Apple's transliterated English: the merge trusts Whisper	เปิดเทอร์มินอลวีเอสโค้ดแล้วรันบันสตาร์ท	เปิด terminal VS Code แล้ว run bun start	send
+name	apple	whisper	silenced	expected
+Whisper heard nothing	ทำต่อเลยนะครับ			Whisper ไม่ได้ยินอะไร
+Apple's 'not' lost under Whisper's English span	บิวด์ไม่ได้นะครับ	Build ได้นะครับ		คำว่า "ไม่" หายไป
+the 'not' only Whisper heard is kept: sent	อยากแก้ไฟล์นี้นะครับ	อย่าแก้ไฟล์นี้นะครับ		send
+the merge dropping Whisper's added ending is not a doubt	ช่วยรันเทสต์ให้หน่อย	ช่วย run test ให้หน่อย Thank you.		send
+a full stop after Whisper's text is not a doubt	เปิดวีเอสโค้ดให้หน่อย	เปิด VS Code ให้หน่อย.		send
+Apple's transliterated English: the merge trusts Whisper	เปิดเทอร์มินอลวีเอสโค้ดแล้วรันบันสตาร์ท	เปิด terminal VS Code แล้ว run bun start		send
+another voice silenced, words only Apple heard: held	ช่วยตรวจสอบโค้ดแล้วก็แก้บั๊กให้หน่อยนะ	ช่วยตรวจสอบโค้ด ให้หน่อยนะ	yes	มีเสียงคนอื่นแทรก คำที่ Apple ได้ยินฝ่ายเดียวอาจเป็นของเขา
+words only Apple heard, nothing silenced: sent	ช่วยตรวจสอบโค้ดแล้วก็แก้บั๊กให้หน่อยนะ	ช่วยตรวจสอบโค้ด ให้หน่อยนะ		send
+another voice silenced, Whisper heard all Apple did: sent	ช่วยรันเทสต์ให้หน่อย	ช่วย run test ให้หน่อย	yes	send
+another voice silenced, a stammer only Apple kept is dropped: sent	ช่วยดูของของฉันหน่อย	ช่วยดูของฉันหน่อย	yes	send
+another voice silenced, Whisper's full stop where it was: held	ช่วยตรวจสอบโค้ดแล้วก็แก้บั๊กให้หน่อยนะ	ช่วยตรวจสอบโค้ด.	yes	มีเสียงคนอื่นแทรก คำที่ Apple ได้ยินฝ่ายเดียวอาจเป็นของเขา
+another voice silenced, a number only Apple heard: held	แก้ไฟล์ที่ 3 ให้หน่อย	แก้ไฟล์ที่ ให้หน่อย	yes	มีเสียงคนอื่นแทรก คำที่ Apple ได้ยินฝ่ายเดียวอาจเป็นของเขา

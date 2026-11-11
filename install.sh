@@ -41,6 +41,21 @@ else
     echo "⚠️  Homebrew not found: skipping Whisper (Apple's recognizer only)"
 fi
 
+echo "2b. Installing the speaker gate (only your voice reaches Whisper)..."
+# Optional: without these files, or a voiceprint, Whisper hears everything. Apple silicon only.
+SPEAKER=$DATA/speaker
+mkdir -p "$SPEAKER"
+download https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx \
+    "$SPEAKER/campplus.onnx"
+if [ ! -f "$SPEAKER/libsherpa-onnx-c-api.dylib" ] || [ ! -f "$SPEAKER/libonnxruntime.dylib" ]; then
+    download https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-osx-arm64-shared-no-tts-lib.tar.bz2 \
+        "$SPEAKER/sherpa-onnx.tar.bz2"
+    tar xjf "$SPEAKER/sherpa-onnx.tar.bz2" -C "$SPEAKER" --strip-components 2 \
+        '*/lib/libsherpa-onnx-c-api.dylib' '*/lib/libonnxruntime.dylib' || echo "⚠️  Could not unpack sherpa-onnx"
+    rm -f "$SPEAKER/sherpa-onnx.tar.bz2"
+fi
+[ -f "$SPEAKER/voiceprint.f32" ] || echo "ℹ️  Speaker gate off until you enroll: see README, Speaker gate"
+
 # Install common vocabulary without overwriting user settings.
 mkdir -p ~/.config/voice-agent
 cp scripts/vocabulary.txt ~/.config/voice-agent/common.txt

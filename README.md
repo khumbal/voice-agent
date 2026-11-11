@@ -29,6 +29,9 @@ and merges them word by word, so you get Thai from Apple and the technical terms
 - **Safe by default** — holding to send never presses Enter when the text contains `drop` or `delete` followed by a
   space, or `force`, `rm -rf` or `reset --hard` anywhere (even inside a longer word), or when the two engines disagree
   in a way that needs a second look; the text is typed and waits for you.
+- **Only your voice** — once you enroll, whatever only other people's voices fill is silenced before Whisper hears
+  it, so a colleague talking in your pauses mostly does not reach Whisper's text. Runs locally, on the microphone
+  you enrolled with.
 - **Your vocabulary** — example sentences steer Whisper toward your terms, and `term = misheard, spellings` lines fix
   words the engines keep getting wrong. Edits apply to the next recording, no rebuild.
 - **Picks the right microphone** — a preference list instead of whatever macOS made the default input last.
@@ -148,6 +151,27 @@ never a virtual device. To list the names it sees and the one it would pick:
 ~/Applications/VoiceAgent.app/Contents/MacOS/voice-agent microphones
 ```
 
+### Speaker gate
+
+`install.sh` downloads [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)'s C library and the CAM++ zh+en speaker
+model into `~/.local/share/voice-agent/speaker/`. Enroll with recordings of you alone and the microphone they were
+made with (any part of its name); until then the gate is off and Whisper hears everything:
+
+```bash
+~/Applications/VoiceAgent.app/Contents/MacOS/voice-agent enroll --mic PD200X ~/Library/Caches/voice-agent/<recording>.wav …
+~/Applications/VoiceAgent.app/Contents/MacOS/voice-agent gate <recording>.wav [gated.wav]   # what it would silence
+```
+
+Every 1.5 s window (every 0.5 s) with at least 0.5 s of sound is compared with your voiceprint; a stretch where every
+window scores under 0.3 is silenced, keeping a margin next to your words, even when that is all of a run (Whisper
+decodes a long dictation in runs of about 6 s). On any other microphone the gate is off, since your voice scores lower
+there. Words Whisper misses this way stay in the text from Apple's recognizer (but for a word repeating its neighbour,
+taken as a stammer), which is not gated: the live text in the HUD is Apple's. Each run's scores go to the log as a
+`gate` line. A bystander Apple's recognizer also heard still reaches the text, so when the gate silenced someone and the
+text keeps words only Apple heard, a dictation held to send is typed without Return for you to check. A bystander also
+reaches Whisper's text when talking over you, in that margin (0.5 s to about 1 s, more when a window mostly theirs still
+scores as yours), for under 0.5 s, or in a run shorter than 1.5 s.
+
 ### Learner
 
 Automatic learning is paused. The legacy learner reads a combined dictation log and can send its contents to Claude;
@@ -187,6 +211,7 @@ Control-Option-Space ─► hotkey listener (LaunchAgent)
 | `~/Library/Logs/voice-agent.log` | Each recording: what each engine heard and where the text went |
 | `~/Library/Caches/voice-agent/` | The latest 200 recordings, for re-measuring changes on real speech |
 | `~/.local/share/voice-agent/` | Whisper models, the URI token, signing keychain, learner state |
+| `~/.local/share/voice-agent/speaker/` | The speaker gate's library, model and your voiceprint |
 | `~/.config/voice-agent/` | Your vocabulary layers and microphones |
 
 ## Development
