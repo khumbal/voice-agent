@@ -375,7 +375,7 @@ enum HUDState {
     var symbol: String? {
         switch self {
         case .waiting, .listening, .transcribing: return nil
-        case .sent: return "checkmark"
+        case .sent: return nil // its checkmark is drawn as with a pen (VoiceOrb)
         case .typed: return "text.cursor"
         case .copied: return "doc.on.clipboard"
         case .warning: return "exclamationmark"
@@ -461,6 +461,7 @@ class VoiceOrb: NSView {
     private let sphere = CALayer()
     private let gradient = TurningGradient()
     private let icon = NSImageView()
+    private let check = CAShapeLayer()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -477,14 +478,64 @@ class VoiceOrb: NSView {
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
         icon.contentTintColor = .white
         addSubview(icon)
+        // Laid out for the 28 pt orb, y up: the short stroke down, then the long one up, as a hand writes it.
+        let tick = CGMutablePath()
+        tick.move(to: CGPoint(x: 9.5, y: 14.2))
+        tick.addLine(to: CGPoint(x: 12.6, y: 11))
+        tick.addLine(to: CGPoint(x: 18.8, y: 17.6))
+        check.path = tick
+        check.fillColor = nil
+        check.strokeColor = NSColor.white.cgColor
+        check.lineWidth = 2.2
+        check.lineCap = .round
+        check.lineJoin = .round
+        check.shadowColor = NSColor.white.cgColor // a faint glow, like the rim's light
+        check.shadowOffset = .zero
+        check.shadowRadius = 2
+        check.shadowOpacity = 0.45
+        check.strokeEnd = 0
+        layer?.addSublayer(check)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    // A layer added by hand keeps contentsScale 1, which would draw the stroke soft on a Retina screen.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        check.contentsScale = window?.backingScaleFactor ?? 2
+    }
 
     func show(_ state: HUDState) {
         gradient.show(state)
         icon.image = state.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
         swell(0)
+        drawCheck(state == .sent)
+    }
+
+    // The checkmark writes itself once as the colours turn, and the sphere settles under it; Reduce Motion shows it
+    // whole at once.
+    private func drawCheck(_ shown: Bool) {
+        check.removeAllAnimations()
+        sphere.removeAnimation(forKey: "settle")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        check.strokeEnd = shown ? 1 : 0
+        CATransaction.commit()
+        guard shown, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let stroke = CABasicAnimation(keyPath: "strokeEnd")
+        stroke.fromValue = 0
+        stroke.beginTime = CACurrentMediaTime() + 0.1
+        stroke.duration = 0.42
+        stroke.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.2, 1) // quick, easing out like a pen
+        stroke.fillMode = .backwards // hidden until it starts
+        check.add(stroke, forKey: "stroke")
+        let settle = CASpringAnimation(keyPath: "transform.scale")
+        settle.fromValue = 0.88
+        settle.toValue = 1
+        settle.damping = 11
+        settle.stiffness = 260
+        settle.duration = settle.settlingDuration
+        sphere.add(settle, forKey: "settle")
     }
 
     // level 0…1, as the meter reads it.
@@ -2074,8 +2125,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                                state: .typed)
                     self.playSound("Morse")
                 }
-                // Keep the result on screen briefly; a failure or a paste hint stays longer so it can be read.
-                let shown = failure != nil ? 2.5 : pasteByUser || send && doubt != nil ? 1.5 : 0.6
+                // Keep the result on screen briefly; a failure or a paste hint stays longer so it can be read, and a
+                // send long enough for its checkmark to finish writing and settle (VoiceOrb.drawCheck).
+                let shown = failure != nil ? 2.5 : pasteByUser || send && doubt != nil ? 1.5 : entered ? 1.0 : 0.6
                 DispatchQueue.main.asyncAfter(deadline: .now() + shown) { NSApp.terminate(nil) }
             }
         }
