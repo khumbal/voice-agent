@@ -885,11 +885,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // The GPU clocks down when idle: after a minute without a run, the first one takes 1.7 s instead of 1.1 s (a
-    // 2.7 s recording, measured twice). A second of silence, decoded without VAD (which would skip it: 0.01 s), is
-    // that first run, as the recording starts; taking the first snapshot, starting the end or Esc stops it while it
-    // is under way (stopWarmUp; the server drops it, and the next run pays ~0.1 s for that). Skipped when another
-    // process holds the Whisper lock: the GPU is busy, so warm. The lock is held through this server's load (~0.6 s)
-    // too; another recorder's run waits that long for it.
+    // 2.7 s recording, measured twice). A second of faint noise, decoded without VAD (which would skip it: 0.01 s),
+    // is that first run, as the recording starts: 1.2 s. Not digital silence: Whisper decoded that for 12.9 s,
+    // so the warm-up ended only when stopped or at whisperTimeout, holding the GPU and the lock until then. Taking
+    // the first snapshot, starting the end or Esc stops it while it is under way (stopWarmUp; the server drops it,
+    // at no cost to the next run). Skipped when another process holds the Whisper lock: the GPU is busy, so warm.
+    // The lock is held through this server's load (~0.6 s) too; another recorder's run waits that long for it.
     private func warmWhisperServer() {
         processLock.lock()
         warming = true
@@ -907,7 +908,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard wanted, lock >= 0 else { return }
             defer { close(lock) }
             guard flock(lock, LOCK_EX | LOCK_NB) == 0 else { return }
-            guard Self.writeWAV([Float](repeating: 0, count: 16000), to: self.pauseWAV) else { return }
+            var state: UInt32 = 1 // the same noise each time (+-0.001), as measured
+            let noise = (0..<16000).map { _ -> Float in
+                state = state &* 1_664_525 &+ 1_013_904_223
+                return (Float(state >> 16) / 65536 - 0.5) * 0.002
+            }
+            guard Self.writeWAV(noise, to: self.pauseWAV) else { return }
             defer { try? FileManager.default.removeItem(at: self.pauseWAV) }
             let run = self.transcribeOnServer(self.pauseWAV, timeout: Config.whisperTimeout, isPause: false,
                                               warmUp: true) { !self.whisperCancelled && self.warming }
@@ -942,7 +948,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private enum ServerRun { case done(String?), unavailable }
 
     // Called with the Whisper lock held. A server still loading the model is waited for, as long as it runs.
-    // warmUp: the run is warmWhisperServer's, decoded without VAD (which would skip its silence) and not counted.
+    // warmUp: the run is warmWhisperServer's, decoded without VAD (which would skip its faint noise) and not counted.
     private func transcribeOnServer(_ wav: URL, timeout: TimeInterval, isPause: Bool, warmUp: Bool = false,
                                     wanted: () -> Bool) -> ServerRun {
         processLock.lock()
@@ -1050,9 +1056,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         tapLock.lock()
         let peak = peakLevel
         // The last pause's run stands for the whole recording when nothing was said after it: not loud enough to end
-        // the pause, nor (for a quieter word) heard by Apple.
+        // the pause, nor (for a quieter word) heard by Apple. Apple's text also changes when its last words come, or
+        // are revised, after the snapshot (47 of 155 kept recordings; decoded again, all 47 gave the same text, ~0.8 s
+        // later): with only silence recorded since, that is what the change is. Only on the enrolled microphone,
+        // where silence was measured (see Config.isSilent).
         let snapshot = spokeSinceSnapshot || snapshotFrames == 0 ? nil : snapshotFrames
-        let reusable = snapshot != nil && transcriptAtSnapshot.map(Self.spoken) == Self.spoken(latestTranscript)
+        let sameText = transcriptAtSnapshot.map(Self.spoken) == Self.spoken(latestTranscript)
+        let silentEnd = snapshot != nil && !sameText && SpeakerGate.shared?.hears(inputDeviceName) == true
+            && Config.isSilent(heard16k[snapshotFrames...]) // logged: the run was taken on the silence alone
+        let reusable = snapshot != nil && (sameText || silentEnd)
         // The WAV is closed: nothing is appended any more, so this is all of it, shared without a copy. When the last
         // pause's run stands for the recording, the end's starts where that one did (not on the quiet after it).
         let heard = heard16k, starts = chunkStarts
@@ -1113,7 +1125,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 + "whisper_ms=\(Int(Date().timeIntervalSince(started) * 1000)) apple=\"\(appleText)\" "
                 + "whisper=\"\(whisperText ?? "")\" final=\"\(finalText)\" "
                 + "starts=\"\(self.startChanges.joined(separator: " | "))\" "
-                + "early=\(early != nil) pause_runs=\(self.pauseRuns) server_runs=\(self.serverRuns) "
+                + "early=\(early != nil) silent_end=\(silentEnd) pause_runs=\(self.pauseRuns) "
+                + "server_runs=\(self.serverRuns) "
                 + "cli_runs=\(self.cliRuns) warm=\(self.warm) chunks=\(chunks.count) held=\"\(doubt ?? "")\" "
                 + "project=\(folder.map(Config.projectName) ?? "-")")
             self.stopWhisperServer() // the last run is over: give its memory back before the text is delivered

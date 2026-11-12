@@ -1,8 +1,13 @@
 name	frames	expected
-silence	000000000000000	false
-4 loud frames: under 0.5 s	111100000000000	false
-5 loud frames: 0.5 s	111110000000000	true
-5 loud frames apart, the last at the end	100010001000101	true
-speech throughout	111111111111111	true
-5 frames just above -50 dB	qqqqq0000000000	true
-frames just below -50 dB do not count	rrrrrrrrrr11110	false
+silence	000000000000000	false|true
+4 loud frames: under 0.5 s	111100000000000	false|false
+5 loud frames: 0.5 s	111110000000000	true|false
+5 loud frames apart, the last at the end	100010001000101	true|false
+speech throughout	111111111111111	true|false
+5 frames just above -50 dB	qqqqq0000000000	true|false
+frames just below -50 dB do not count	rrrrrrrrrr11110	false|false
+frames just below -50 dB throughout: silence	rrrrrrrrrrrrrrr	false|true
+one frame just above -50 dB: not silence	00000000q000000	false|false
+a last half frame at -48 dB: not silence	00000000000000h	false|false
+a frame that is not a number: loud	00000000n000000	false|false
+nothing recorded after the pause: silence		false|true

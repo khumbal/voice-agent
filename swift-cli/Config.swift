@@ -183,8 +183,9 @@ struct Config {
     // At each pause Whisper starts on all that was heard so far (in the current chunk): when nothing is said after
     // it, that run is the one the end of the recording needs, already under way (the push-to-talk key is let go
     // ~1.4 s after the last word, a tap ends silenceTimeout after it). A pause is this long with every tap buffer
-    // below a tenth of the loudest so far; a word quieter than that after it still counts, through Apple's text (see
-    // finishAndDispatch).
+    // below a tenth of the loudest so far; a word quieter than that after it still counts, through Apple's text,
+    // unless the enrolled microphone recorded only silence since (isSilent): Apple's text also changes when its last
+    // words come late (see finishAndDispatch).
     static let pauseSeconds: TimeInterval = 0.6
     static let pauseQuietRatio: Float = 0.1
     // A long dictation is decoded a chunk at a time: the first pause once the chunk is this long ends it, that
@@ -227,12 +228,23 @@ struct Config {
 
     // Whether a window holds speakerVoicedSeconds of 100 ms frames louder than speakerQuietDB (see speakerDir).
     static func isVoiced(_ window: ArraySlice<Float>) -> Bool {
-        let frames = stride(from: window.startIndex, to: window.endIndex, by: 1600).filter { start in
-            let frame = window[start..<min(start + 1600, window.endIndex)]
+        Double(loudFrames(window)) / 10 >= speakerVoicedSeconds
+    }
+
+    // Whether nothing in these samples is as loud as speakerQuietDB: no 100 ms frame, nor a shorter last one. On the
+    // enrolled desk microphone the quiet after the last word stayed under -56 dB in 47 recordings, speech sat near
+    // -28 dB, and Whisper heard none of 14 words put there under -50 dB (5 at -46 dB). Not a measure for another
+    // input: a louder noise floor is never silent by this, and on a low-gain one a quiet word is.
+    static func isSilent(_ samples: ArraySlice<Float>) -> Bool { loudFrames(samples) == 0 }
+
+    // How many 100 ms frames (the last may be shorter) are not quieter than speakerQuietDB; a frame whose level
+    // cannot be told (not a number) counts as loud.
+    private static func loudFrames(_ samples: ArraySlice<Float>) -> Int {
+        stride(from: samples.startIndex, to: samples.endIndex, by: 1600).filter { start in
+            let frame = samples[start..<min(start + 1600, samples.endIndex)]
             let power = frame.reduce(0) { $0 + $1 * $1 } / Float(frame.count)
-            return 10 * log10(power + 1e-18) >= speakerQuietDB
-        }
-        return Double(frames.count) / 10 >= speakerVoicedSeconds
+            return !(10 * log10(power + 1e-18) < speakerQuietDB)
+        }.count
     }
 
     // The parts of a run to silence: each speakerHop block whose scored windows (a quiet one is nil) are all under

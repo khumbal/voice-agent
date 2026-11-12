@@ -15,8 +15,8 @@ quiet window; prints the silenced ranges in seconds or "none"),
 result<TAB>name<TAB>apple<TAB>whisper<TAB>send<TAB>silenced<TAB>seconds (Transcript.result made as the app makes
 it, whisper "-" when it failed, "~" when it is not installed; prints the JSON, "|" and the doubt that holds Return,
 "send" for none),
-voiced<TAB>name<TAB>frames (one 100 ms frame each, "1" at -20 dB, "q" -45 dB, "r" -55 dB, "0" -60 dB; prints
-Config.isVoiced).
+voiced<TAB>name<TAB>frames (one 100 ms frame each, "1" at -20 dB, "q" -45 dB, "r" -55 dB, "0" -60 dB, "h" half a
+frame at -48 dB, "n" not a number; prints Config.isVoiced, "|" and Config.isSilent).
 Output lines: name<TAB>result. Usage: mkharness.py <swift-cli dir> <vocabulary.txt> <out.swift>"""
 import json, os, sys
 
@@ -78,10 +78,10 @@ while let line = readLine() {
         print("\(p[1])\t\(String(decoding: made.result.json, as: UTF8.self))|\(made.doubt ?? "send")")
     case ("voiced", 3):
         // After a loud frame, so the window starts mid-array as a run's windows do.
-        let levels: [Character: Float] = ["1": 0.1, "0": 0.001, "q": 0.0056, "r": 0.0018]
-        let frames = p[2].flatMap { [Float](repeating: levels[$0]!, count: 1600) }
+        let levels: [Character: Float] = ["1": 0.1, "0": 0.001, "q": 0.0056, "r": 0.0018, "h": 0.00398, "n": .nan]
+        let frames = p[2].flatMap { [Float](repeating: levels[$0]!, count: $0 == "h" ? 800 : 1600) }
         let samples = [Float](repeating: 0.1, count: 1600) + frames
-        print("\(p[1])\t\(Config.isVoiced(samples[1600...]))")
+        print("\(p[1])\t\(Config.isVoiced(samples[1600...]))|\(Config.isSilent(samples[1600...]))")
     case ("mic", 4):
         let microphones = p[2].split(separator: ";").enumerated().map { i, device -> Microphone in
             let f = device.split(separator: "/").map(String.init)

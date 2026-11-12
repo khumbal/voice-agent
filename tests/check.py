@@ -22,8 +22,10 @@
   programs (TranscriptResult) with its holds, then "|" and the doubt that holds Return ("send": none), made from the
   engines' texts as the app makes them; whisper "-" when it failed, "~" when it is not installed. The doubt is a hold
   whether or not it was a send.
-- voiced.tsv (name, frames, expected): whether a 1.5 s window is scored (Config.isVoiced), one character per 100 ms
-  frame: "1" -20 dB, "q" -45 dB, "r" -55 dB (either side of Config.speakerQuietDB), "0" -60 dB.
+- voiced.tsv (name, frames, expected): whether a window (1.5 s in the app) is scored (Config.isVoiced), then "|" and
+  whether the same samples, as the recording's end after its last pause, are silence (Config.isSilent), one
+  character per 100 ms frame: "1" -20 dB, "q" -45 dB, "r" -55 dB (either side of Config.speakerQuietDB), "0" -60 dB,
+  "h" half a frame at -48 dB (-51 dB if taken as a whole frame), "n" a frame that is not a number.
 Usage: check.py <harness-binary> [--update]"""
 import os, subprocess, sys
 
